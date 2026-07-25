@@ -86,7 +86,7 @@ def collect_targets(platform: str, design: str) -> List[Tuple[Path, str]]:
             if not variant_dir.is_dir():
                 continue
             if variant_dir.name == PROTECTED_VARIANT:
-                continue  # base 受保护
+                continue  # base is protected
             targets.append((variant_dir, f"{cat}/{platform}/{design}/{variant_dir.name}"))
 
     # agenticpd runs
@@ -97,7 +97,7 @@ def collect_targets(platform: str, design: str) -> List[Tuple[Path, str]]:
 
 
 # ---------------------------------------------------------------------------
-# 主逻辑
+# Main logic
 # ---------------------------------------------------------------------------
 
 def main() -> None:
@@ -131,7 +131,7 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # 解析 platform / design
+    # Resolve platform / design
     if args.target is not None:
         platform, design = args.target
     elif args.platform is not None and args.design is not None:

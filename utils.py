@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-utils.py — AgenticPD 辅助工具模块
+utils.py — AgenticPD utility module
 
-包含：
-1. 日志初始化（控制台 + 文件双通道）
-2. .env 文件解析（手写实现，避免强依赖 python-dotenv）
-3. LLM 输出的健壮 JSON 提取（剥 markdown 围栏、截取首尾大括号）
-4. QoR 数据类及其解析（JSON metrics 为主、rpt/log 正则兜底）
-5. QoR 优劣比较器（WNS 优先 → TNS → 功耗 → 面积，带容差）
-6. 历史记录的原子化落盘/加载（防崩溃损坏）
+Contains:
+1. Logging initialization (dual channel: console + file)
+2. .env file parsing (hand-rolled implementation, avoids hard python-dotenv dependency)
+3. Robust JSON extraction from LLM output (strip markdown fences, extract first/last braces)
+4. QoR dataclass and its parsing (JSON metrics primary, rpt/log regex fallback)
+5. QoR quality comparator (WNS-first → TNS → power → area, with tolerances)
+6. Atomic history file persistence (crash-safe)
 
-直接运行本文件可执行内置自测：python3 agenticpd/utils.py
+Run self-tests directly: python3 agenticpd/utils.py
 """
 
 from __future__ import annotations
@@ -27,14 +27,15 @@ import config
 
 
 # ---------------------------------------------------------------------------
-# 日志
+# Logging
 # ---------------------------------------------------------------------------
 
 def setup_logging(log_file: Optional[Path] = None,
                   level: int = logging.INFO) -> logging.Logger:
-    """初始化 root logger：控制台 + 可选文件双通道输出。
+    """Initialize root logger: console + optional file dual-channel output.
 
-    重复调用是安全的（会先清空已有 handler），方便测试场景反复初始化。
+    Repeated calls are safe (existing handlers are cleared first), making
+    this convenient for test scenarios that need re-initialization.
     """
     root = logging.getLogger()
     root.setLevel(level)
@@ -56,14 +57,16 @@ def setup_logging(log_file: Optional[Path] = None,
 
 
 # ---------------------------------------------------------------------------
-# .env 解析
+# .env file parsing
 # ---------------------------------------------------------------------------
 
 def load_dotenv_file(path: Path) -> None:
-    """解析 KEY=VALUE 形式的 .env 文件并写入 os.environ。
+    """Parse a KEY=VALUE .env file and write entries into os.environ.
 
-    规则：忽略空行与 # 注释；不覆盖已存在的环境变量（环境优先于文件）；
-    值两侧的单/双引号会被剥掉。文件不存在时静默返回（key 可能直接来自环境）。
+    Rules: skip blank lines and # comments; never override existing env vars
+    (environment takes priority over file); surrounding single/double quotes
+    on values are stripped. Silently returns if file doesn't exist (key may
+    be provided directly from the environment).
     """
     if not path.is_file():
         return
@@ -79,11 +82,12 @@ def load_dotenv_file(path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 健壮 JSON 提取
+# Robust JSON extraction
 # ---------------------------------------------------------------------------
 
 class JsonParseError(Exception):
-    """LLM 输出无法解析为 JSON 时抛出；raw 字段保留原始文本便于回喂重问"""
+    """LLM output could not be parsed as JSON; the `raw` field preserves the
+    original text for feeding back to the model"""
 
     def __init__(self, reason: str, raw: str):
         super().__init__(reason)
@@ -92,19 +96,21 @@ class JsonParseError(Exception):
 
 
 def extract_json(text: str) -> Dict[str, Any]:
-    """从 LLM 输出文本中健壮地提取一个 JSON 对象。
+    """Robustly extract a JSON object from LLM output text.
 
-    处理策略（逐步降级）：
-    1. 剥掉 ```json ... ``` 或 ``` ... ``` 的 markdown 代码围栏；
-    2. 直接尝试 json.loads；
-    3. 失败则截取首个 '{' 到最后一个 '}' 的子串再尝试；
-    4. 仍失败则抛 JsonParseError（调用方据此回喂 LLM 重问）。
+    Processing strategy (progressive degradation):
+    1. Strip ```json ... ``` or ``` ... ``` markdown code fences;
+    2. Try direct json.loads;
+    3. If that fails, extract substring from first '{' to last '}' and retry;
+    4. If still failing, raise JsonParseError (caller feeds back to LLM).
+
     """
     if not isinstance(text, str) or not text.strip():
-        raise JsonParseError("LLM 返回内容为空", raw=str(text))
+        raise JsonParseError("LLM returned empty content", raw=str(text))
 
     cleaned = text.strip()
-    # 剥 markdown 代码围栏（```json 或 ```），允许围栏前后有其他闲聊文本
+    # Strip markdown code fences (```json or ```), allowing surrounding
+    # conversational text before/after the fence
     fence = re.search(r"```(?:json)?\s*(.*?)```", cleaned, re.DOTALL | re.IGNORECASE)
     if fence:
         cleaned = fence.group(1).strip()
@@ -117,7 +123,8 @@ def extract_json(text: str) -> Dict[str, Any]:
         except json.JSONDecodeError:
             pass
 
-    # 截取首尾大括号之间的内容（应对 JSON 前后混杂说明文字的情况）
+    # Extract content between first '{' and last '}' (handles text with
+    # explanatory prose before/after the JSON)
     start, end = cleaned.find("{"), cleaned.rfind("}")
     if start != -1 and end > start:
         try:
@@ -125,21 +132,23 @@ def extract_json(text: str) -> Dict[str, Any]:
             if isinstance(obj, dict):
                 return obj
         except json.JSONDecodeError as e:
-            raise JsonParseError(f"JSON 语法错误: {e}", raw=text)
+            raise JsonParseError(f"JSON syntax error: {e}", raw=text)
 
-    raise JsonParseError("文本中找不到 JSON 对象", raw=text)
+    raise JsonParseError("No JSON object found in text", raw=text)
 
 
 # ---------------------------------------------------------------------------
-# QoR 数据类与解析
+# QoR dataclass and parsing
 # ---------------------------------------------------------------------------
 
 @dataclass
 class QoR:
-    """四项 QoR 指标。时序单位 ps（负值代表违例），面积 μm²，功耗 W。
+    """Four QoR metrics. Timing in ps (negative = violation), area in µm²,
+    power in W.
 
-    wns_ps 语义说明：取自 ORFS 的 worst slack（可为正，正值表示时序收敛且有裕量），
-    与论文中"最差负时序裕量"兼容——比较器把 >=0 视为时序已收敛。
+    wns_ps semantics: taken from ORFS worst slack (can be positive; positive
+    means timing is met with margin), compatible with the paper's "worst
+    negative slack" concept — the comparator treats >= 0 as timing converged.
     """
 
     wns_ps: Optional[float] = None
@@ -148,7 +157,8 @@ class QoR:
     power_w: Optional[float] = None
 
     def is_complete(self) -> bool:
-        """四项指标是否全部解析成功（缺任一项的 QoR 不参与最优比较）"""
+        """Whether all four metrics were successfully parsed (incomplete QoR
+        does not participate in best comparison)"""
         return all(v is not None for v in
                    (self.wns_ps, self.tns_ps, self.area_um2, self.power_w))
 
@@ -163,7 +173,8 @@ class QoR:
                    area_um2=d.get("area_um2"), power_w=d.get("power_w"))
 
     def pretty(self) -> str:
-        """人类可读的单行摘要（也用于 prompt 中的历史序列化）"""
+        """Human-readable single-line summary (also used for history
+        serialization in prompts)"""
         def fmt(v: Optional[float], spec: str, unit: str) -> str:
             return "N/A" if v is None else format(v, spec) + unit
         return (f"WNS={fmt(self.wns_ps, '.1f', 'ps')} "
@@ -172,20 +183,22 @@ class QoR:
                 f"Power={fmt((self.power_w or 0) * 1e3 if self.power_w is not None else None, '.4f', 'mW')}")
 
     # ------------------------------------------------------------------
-    # 解析入口 1：JSON metrics（首选，最健壮）
+    # Parse entry 1: JSON metrics (preferred, most robust)
     # ------------------------------------------------------------------
     @classmethod
     def from_report_json(cls, report_json: Path) -> "QoR":
-        """从 finish 阶段的 6_report.json 解析 QoR。
+        """Parse QoR from the finish-stage 6_report.json.
 
-        关键键（时序单位 ns，×1000 转 ps）：
+        Key keys (timing unit ns, ×1000 → ps):
           finish__timing__setup__ws / finish__timing__setup__tns
           finish__power__total / finish__design__instance__area
 
-        注意：finish__design__instance__area 在文件中出现两次（前者含 fill cell，
-        后者为纯标准单元面积才是正确值）。CPython 标准库 json.load 对重复键采用
-        "后者覆盖前者"策略，恰好得到正确值 —— 此行为是本解析正确性的前提，
-        切勿换用对重复键报错/取前者的解析器。
+        Note: finish__design__instance__area appears twice in the file
+        (the first occurrence includes fill cells; the second is pure standard
+        cell area and is the correct value). CPython's stdlib json.load uses
+        "last-wins" for duplicate keys, which coincidentally gives the correct
+        value — this behavior is a prerequisite for correctness; do NOT switch
+        to a parser that errors on or takes the first value for duplicate keys.
         """
         data = json.loads(report_json.read_text(encoding="utf-8"))
         scale = config.TIMING_UNIT_TO_PS
@@ -204,27 +217,29 @@ class QoR:
         )
 
     # ------------------------------------------------------------------
-    # 解析入口 2：rpt/log 正则兜底（JSON 缺失时使用）
+    # Parse entry 2: rpt/log regex fallback (used when JSON is missing)
     # ------------------------------------------------------------------
-    # 6_finish.rpt 中的时序摘要行（re.MULTILINE 逐行匹配）：
-    #   "worst slack max 0.02"  —— 取 worst slack 作为 WNS（与 JSON 的 ws 语义一致；
-    #                              rpt 里的 "wns max" 行在时序收敛时被钳为 0.00，
-    #                              丢失正裕量信息，故不用它）
+    # Timing summary lines in 6_finish.rpt (re.MULTILINE, match line-by-line):
+    #   "worst slack max 0.02"  — use worst slack as WNS (consistent with JSON
+    #                             ws semantics; the "wns max" line in rpt is
+    #                             clamped to 0.00 when timing is met, losing
+    #                             positive margin, so we don't use it)
     #   "tns max 0.00"
     _RE_WORST_SLACK = re.compile(r"^worst slack max\s+(-?[\d.]+)", re.MULTILINE)
     _RE_TNS = re.compile(r"^tns max\s+(-?[\d.]+)", re.MULTILINE)
-    # report_power 表格的 Total 行，第 4 个数值列为总功耗（W）：
+    # Total row in report_power table; 4th numeric column = total power (W):
     #   "Total                  1.41e-03   1.19e-03   1.70e-05   2.62e-03 100.0%"
     _RE_POWER_TOTAL = re.compile(
         r"^Total\s+([\d.eE+-]+)\s+([\d.eE+-]+)\s+([\d.eE+-]+)\s+([\d.eE+-]+)",
         re.MULTILINE)
-    # 面积行只存在于 6_report.log（6_finish.rpt 中没有！）：
+    # Area line only exists in 6_report.log (NOT in 6_finish.rpt!):
     #   "Design area 716 um^2 62% utilization."
     _RE_DESIGN_AREA = re.compile(r"^Design area\s+([\d.]+)\s+um\^2", re.MULTILINE)
 
     @classmethod
     def from_reports_fallback(cls, finish_rpt: Path, report_log: Path) -> "QoR":
-        """正则解析 6_finish.rpt（时序/功耗）与 6_report.log（面积）的兜底路径"""
+        """Regex-based fallback: parse 6_finish.rpt (timing/power) and
+        6_report.log (area)"""
         qor = cls()
         scale = config.TIMING_UNIT_TO_PS
 
@@ -250,19 +265,22 @@ class QoR:
 
 
 # ---------------------------------------------------------------------------
-# QoR 优劣比较器
+# QoR quality comparator
 # ---------------------------------------------------------------------------
 
 def qor_is_better(new: Optional[QoR], old: Optional[QoR],
                   wns_tol_ps: float, tns_tol_ps: float) -> bool:
-    """判断 new 是否严格优于 old（用于最优结果更新，打平时保留 old）。
+    """Whether `new` is strictly better than `old` (used for best-result updates;
+    ties keep the old result).
 
-    比较优先级（与论文一致，带容差避免噪声主导）：
-    1. 失败/不完整的 QoR 恒输；
-    2. 双方 WNS 均 >= 0（时序均已收敛）→ 多余正裕量无价值，直接比功耗/面积；
-    3. |ΔWNS| > wns_tol_ps → WNS 大者（违例更小者）胜；
-    4. |ΔTNS| > tns_tol_ps → TNS 大者胜；
-    5. 功耗小者胜；仍平则面积小者胜；完全打平判 new 不优（保守）。
+    Comparison priority (consistent with paper, tolerances avoid noise dominating):
+    1. Failed/incomplete QoR always loses;
+    2. Both WNS >= 0 (timing converged on both) → excess positive margin has no
+       value, skip directly to power/area comparison;
+    3. |ΔWNS| > wns_tol_ps → larger WNS (less violation) wins;
+    4. |ΔTNS| > tns_tol_ps → larger TNS wins;
+    5. Lower power wins; if still tied, lower area wins; exact tie → new loses
+       (conservative, keep old best).
     """
     if new is None or not new.is_complete():
         return False
@@ -284,11 +302,12 @@ def qor_is_better(new: Optional[QoR], old: Optional[QoR],
 
 
 # ---------------------------------------------------------------------------
-# 历史记录持久化
+# History persistence
 # ---------------------------------------------------------------------------
 
 def save_history_atomic(path: Path, history: List[Dict[str, Any]]) -> None:
-    """原子化写入历史记录：先写 .tmp 再 os.replace，中途崩溃不会损坏旧文件"""
+    """Atomic history write: write to .tmp then os.replace; crash mid-write
+    won't corrupt the old file"""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(history, ensure_ascii=False, indent=2),
@@ -297,7 +316,8 @@ def save_history_atomic(path: Path, history: List[Dict[str, Any]]) -> None:
 
 
 def load_history(path: Path) -> List[Dict[str, Any]]:
-    """加载历史记录；文件损坏时改名为 .corrupt 并返回空列表（重新开始）"""
+    """Load history; if file is corrupted, rename to .corrupt and return empty
+    list (fresh start)"""
     log = logging.getLogger("utils")
     if not path.is_file():
         return []
@@ -305,7 +325,7 @@ def load_history(path: Path) -> List[Dict[str, Any]]:
         history = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(history, list):
             return history
-        raise ValueError("history 顶层不是列表")
+        raise ValueError("history top-level is not a list")
     except (json.JSONDecodeError, ValueError) as e:
         corrupt = path.with_suffix(path.suffix + ".corrupt")
         os.replace(path, corrupt)
@@ -314,61 +334,62 @@ def load_history(path: Path) -> List[Dict[str, Any]]:
 
 
 def save_tree_atomic(path: Path, tree) -> None:
-    """原子化写入树 JSON。此处仅为避免循环导入的桩：
-    实际调用转发到 optimization_tree.save_tree_atomic。
+    """Atomic tree JSON write. This is a stub to avoid circular imports;
+    the actual call delegates to optimization_tree.save_tree_atomic.
     """
     from optimization_tree import save_tree_atomic as _impl
     _impl(path, tree)
 
 
 def load_tree(path: Path):
-    """加载树 JSON。实际调用转发到 optimization_tree.load_tree。"""
+    """Load tree JSON. Actual call delegates to optimization_tree.load_tree."""
     from optimization_tree import load_tree as _impl
     return _impl(path)
 
 
 # ---------------------------------------------------------------------------
-# 内置自测：python3 agenticpd/utils.py
+# Built-in self-test: python3 agenticpd/utils.py
 # ---------------------------------------------------------------------------
 
 def _self_test() -> None:
-    """extract_json 脏样本 + qor_is_better 手写用例表的快速自测"""
+    """Quick self-test of extract_json with dirty samples + qor_is_better
+    with hand-written test cases"""
     # --- extract_json ---
     cases_ok = [
         '{"a": 1}',
         '```json\n{"a": 1}\n```',
-        '好的，参数如下：\n```\n{"a": 1}\n```\n以上。',
-        '前置说明 {"a": 1} 后置说明',
+        'OK, parameters are:\n```\n{"a": 1}\n```\nThat\'s it.',
+        'prefix text {"a": 1} suffix text',
     ]
     for c in cases_ok:
-        assert extract_json(c) == {"a": 1}, f"extract_json 失败: {c!r}"
-    for bad in ("", "完全没有 json", '{"a": }'):
+        assert extract_json(c) == {"a": 1}, f"extract_json failed: {c!r}"
+    for bad in ("", "no json at all", '{"a": }'):
         try:
             extract_json(bad)
-            raise AssertionError(f"应当抛出 JsonParseError: {bad!r}")
+            raise AssertionError(f"Should have raised JsonParseError: {bad!r}")
         except JsonParseError:
             pass
 
-    # --- qor_is_better（容差 wns=10ps, tns=50ps）---
+    # --- qor_is_better (tolerances: wns=10ps, tns=50ps) ---
     q = lambda w, t, a, p: QoR(wns_ps=w, tns_ps=t, area_um2=a, power_w=p)
     table = [
-        # (new, old, 期望, 说明)
-        (q(-50, -500, 700, 2e-3), None, True, "old 为 None 时 new 恒胜"),
-        (None, q(-50, -500, 700, 2e-3), False, "new 为 None 恒输"),
-        (q(-30, -500, 700, 2e-3), q(-50, -500, 700, 2e-3), True, "WNS 差>容差, 大者胜"),
-        (q(-45, -300, 700, 2e-3), q(-50, -500, 700, 2e-3), True, "WNS 打平比 TNS"),
-        (q(-45, -480, 700, 1e-3), q(-50, -500, 700, 2e-3), True, "WNS/TNS 均平比功耗"),
-        (q(-45, -480, 600, 2e-3), q(-50, -500, 700, 2e-3), True, "功耗平比面积"),
-        (q(5, 0, 700, 2e-3), q(20, 0, 700, 1e-3), False, "双方收敛比功耗, new 更费电"),
-        (q(5, 0, 700, 1e-3), q(20, 0, 700, 2e-3), True, "双方收敛比功耗, new 省电胜"),
-        (q(-50, -500, 700, 2e-3), q(-50, -500, 700, 2e-3), False, "完全打平保留 old"),
-        (q(None, -500, 700, 2e-3), q(-50, -500, 700, 2e-3), False, "不完整 QoR 恒输"),
+        # (new, old, expected, description)
+        (q(-50, -500, 700, 2e-3), None, True, "new always wins when old is None"),
+        (None, q(-50, -500, 700, 2e-3), False, "new always loses when None"),
+        (q(-30, -500, 700, 2e-3), q(-50, -500, 700, 2e-3), True, "WNS diff > tol, larger wins"),
+        (q(-45, -300, 700, 2e-3), q(-50, -500, 700, 2e-3), True, "WNS tie, compare TNS"),
+        (q(-45, -480, 700, 1e-3), q(-50, -500, 700, 2e-3), True, "WNS/TNS tie, compare power"),
+        (q(-45, -480, 600, 2e-3), q(-50, -500, 700, 2e-3), True, "power tie, compare area"),
+        (q(5, 0, 700, 2e-3), q(20, 0, 700, 1e-3), False, "both converged, compare power, new worse"),
+        (q(5, 0, 700, 1e-3), q(20, 0, 700, 2e-3), True, "both converged, new saves power"),
+        (q(-50, -500, 700, 2e-3), q(-50, -500, 700, 2e-3), False, "exact tie, keep old"),
+        (q(None, -500, 700, 2e-3), q(-50, -500, 700, 2e-3), False, "incomplete QoR always loses"),
     ]
     for new, old, expect, desc in table:
         got = qor_is_better(new, old, wns_tol_ps=10.0, tns_tol_ps=50.0)
-        assert got == expect, f"qor_is_better 用例失败: {desc} (got={got})"
+        assert got == expect, f"qor_is_better test failed: {desc} (got={got})"
 
-    print("utils.py 自测全部通过 ✔")
+    print("utils.py self-test all passed ✓")
 
 
 if __name__ == "__main__":

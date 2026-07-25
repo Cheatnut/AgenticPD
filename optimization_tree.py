@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-optimization_tree.py — AgenticPD 优化树
+optimization_tree.py — AgenticPD optimization tree
 
-论文 §3 要求：所有历史执行结果组织为一棵有根树 T。根节点 n_0 代表综合后的网表。
-每次执行阶段 s 时创建一个节点 n_k^s = (a_k(s), Q_k(s))。
+Paper §3 requires: all historical execution results organized as a rooted tree T.
+The root node n_0 represents the post-synthesis netlist. Each time a stage s is
+executed, a node n_k^s = (a_k(s), Q_k(s)) is created.
 
-从根到叶的每条完整路径（FP→PL→CTS→RT）对应一个完整的动作元组 a_k。
-分支时从中间节点 n_hat 挂载新子树，复用 Bef(b) 的结果，重新执行 {b} ∪ Aft(b)。
+Every complete path from root to leaf (FP→PL→CTS→RT) corresponds to a complete
+action tuple a_k. When branching, a new subtree is mounted from intermediate node
+n_hat, reusing Bef(b) results and re-executing {b} ∪ Aft(b).
 """
 
 from __future__ import annotations
@@ -22,23 +24,24 @@ import config
 
 log = logging.getLogger("tree")
 
-# 根节点固定标识
+# Fixed root node identifier
 ROOT_ID = "root"
 
 
 @dataclass
 class OptimNode:
-    """优化树中的一个节点，代表某次迭代在某个阶段的执行记录"""
+    """A node in the optimization tree, representing one iteration's execution
+    record at a specific stage"""
 
     node_id: str                       # "root" | "iter0_FP" | "iter2_CTS"
-    iteration: int                     # 创建该节点的迭代号
+    iteration: int                     # iteration that created this node
     stage: str                         # "root" | "FP" | "PL" | "CTS" | "RT"
-    variant: str                       # 本轮 artifact 所在的 FLOW_VARIANT
-    params: Dict[str, Any] = field(default_factory=dict)   # 仅本阶段的参数
-    stage_qor: Optional[Dict[str, float]] = None   # 本阶段执行后的中间 QoR 快照
-    parent_id: Optional[str] = None    # 父节点 node_id（root 为 None）
+    variant: str                       # FLOW_VARIANT where this round's artifacts live
+    params: Dict[str, Any] = field(default_factory=dict)   # this stage's params only
+    stage_qor: Optional[Dict[str, float]] = None   # intermediate QoR snapshot after this stage
+    parent_id: Optional[str] = None    # parent node_id (None for root)
     children_ids: List[str] = field(default_factory=list)
-    branch_count: int = 0              # E(n): 被选为分支起源点的次数
+    branch_count: int = 0              # E(n): times chosen as branch origin
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -69,51 +72,55 @@ class OptimNode:
 
 
 class OptimizationTree:
-    """优化树：所有历史执行结果的有根树结构。
+    """Optimization tree: a rooted tree structure holding all historical
+    execution results.
 
-    使用方式：
-    - tree = OptimizationTree()  创建根节点
-    - tree.add_path(0, "root", [...])  沿 parent 挂载一条阶段节点链
-    - tree.branchable_nodes()  返回可分支节点列表（带 E(n)）
-    - tree.ancestors(node_id)  返回从根到 parent 的节点链（不含自身）
-    - 序列化：tree.to_dict() / OptimizationTree.from_dict(cfg, d)
+    Usage:
+    - tree = OptimizationTree()  creates root node
+    - tree.add_path(0, "root", [...])  mount a stage node chain along a parent
+    - tree.branchable_nodes()  returns branchable node list (with E(n))
+    - tree.ancestors(node_id)  returns node chain from root to parent (excluding self)
+    - Serialize: tree.to_dict() / OptimizationTree.from_dict(cfg, d)
     """
 
     def __init__(self):
         self._nodes: Dict[str, OptimNode] = {}
         self.root = OptimNode(
             node_id=ROOT_ID, iteration=-1, stage="root",
-            variant="base",  # 根无实际 variant，填占位
+            variant="base",  # root has no actual variant; placeholder
         )
         self._nodes[ROOT_ID] = self.root
 
     # ------------------------------------------------------------------
-    # 查询
+    # Queries
     # ------------------------------------------------------------------
     def __contains__(self, node_id: str) -> bool:
         return node_id in self._nodes
 
     def node_count(self) -> int:
-        """返回树中非 root 节点数量（用于 summary / resume 日志）"""
+        """Return number of non-root nodes in tree (for summary / resume logs)"""
         return sum(1 for n in self._nodes.values() if n.stage != "root")
 
     def find_node(self, node_id: str) -> Optional[OptimNode]:
         return self._nodes.get(node_id)
 
     def branchable_nodes(self, max_branch_count: int = 999) -> List[OptimNode]:
-        """返回可作为分支起点的节点列表。
+        """Return nodes eligible as branch origins.
 
-        规则：stage ≠ "root"（根不可分支）、stage ≠ "RT"（叶子不可分支）、
-        branch_count < max_branch_count（防止过探索）。
+        Rules: stage ≠ "root" (root is not branchable), stage ≠ "RT"
+        (leaf is not branchable), branch_count < max_branch_count
+        (prevents over-exploration).
         """
         return [n for n in self._nodes.values()
                 if n.stage not in ("root", "RT")
                 and n.branch_count < max_branch_count]
 
     def ancestors(self, node_id: str) -> List[OptimNode]:
-        """返回从 root → ... → parent(node_id) 的节点链（按顺序，不含 node_id 自身）。
+        """Return the node chain from root → ... → parent(node_id) in order,
+        excluding node_id itself.
 
-        论文中的 Bef(s)：以该节点所在阶段 s 的前置阶段结果列表。
+        This is the paper's Bef(s): the result list of stages preceding the
+        stage s of the given node.
         """
         chain: List[OptimNode] = []
         node = self._nodes.get(node_id)
@@ -127,9 +134,10 @@ class OptimizationTree:
         return chain
 
     def get_path_qor_summary(self, node_id: str) -> List[Tuple[str, Optional[float]]]:
-        """获取从 root 到 node_id 的完整路径上各阶段中间 ws。
+        """Get intermediate ws for each stage along the path from root to node_id.
 
-        返回 [(stage, ws_ps), ...]，用于阶段智能体的"本分支上游 QoR"构建。
+        Returns [(stage, ws_ps), ...], used for building the StageAgent's
+        "upstream QoR in this branch" context.
         """
         chain = self.ancestors(node_id) + [self._nodes[node_id]]
         summary: List[Tuple[str, Optional[float]]] = []
@@ -138,7 +146,7 @@ class OptimizationTree:
                 continue
             ws = None
             if n.stage_qor:
-                # 取该节点 stage_qor 里的第一个 ws_ps 值
+                # Take the first ws_ps value from this node's stage_qor
                 for k, v in n.stage_qor.items():
                     if k.endswith("_ws_ps"):
                         ws = v
@@ -147,9 +155,10 @@ class OptimizationTree:
         return summary
 
     def get_params_chain(self, node_id: str) -> Dict[str, Dict[str, Any]]:
-        """从 root 到 node_id 路径上各阶段的参数汇总。
+        """Aggregate per-stage params along the path from root to node_id.
 
-        返回 {stage: params_dict}，用于构建完整 stage_params dict（Bef 继承 + 下游新生成）。
+        Returns {stage: params_dict}, used to build the complete stage_params
+        dict (Bef inheritance + downstream new generation).
         """
         chain = self.ancestors(node_id) + [self._nodes[node_id]]
         result: Dict[str, Dict[str, Any]] = {}
@@ -159,24 +168,25 @@ class OptimizationTree:
         return result
 
     # ------------------------------------------------------------------
-    # 写操作
+    # Write operations
     # ------------------------------------------------------------------
     def add_path(self, iteration: int, parent_id: str,
                  stages_chain: List[Tuple[str, str, Dict[str, Any],
                                           Optional[Dict[str, float]]]]
                  ) -> List[str]:
-        """沿 parent_id 挂载一条阶段节点链，返回新节点的 node_id 列表。
+        """Mount a stage node chain along parent_id; return new node_id list.
 
         stages_chain: [(stage, variant, params, stage_qor), ...]
-        每个 tuple 创建一个节点，按顺序父子相连。
+        Each tuple creates one node, linked parent→child in order.
         """
         new_ids: List[str] = []
         current_parent = parent_id
         for stage, variant, params, stage_qor in stages_chain:
             node_id = f"iter{iteration}_{stage}"
-            # 若同 iteration + 同 stage 已存在（resume 重放），跳过创建
+            # If same iteration + same stage already exists (resume replay),
+            # skip creation
             if node_id in self._nodes:
-                log.debug("节点 %s 已存在，跳过创建", node_id)
+                log.debug("Node %s already exists, skipping creation", node_id)
                 current_parent = node_id
                 new_ids.append(node_id)
                 continue
@@ -203,7 +213,7 @@ class OptimizationTree:
             node.branch_count += 1
 
     # ------------------------------------------------------------------
-    # 序列化
+    # Serialization
     # ------------------------------------------------------------------
     def to_dict(self) -> Dict[str, Any]:
         return {"nodes": {nid: n.to_dict() for nid, n in self._nodes.items()}}
@@ -216,7 +226,7 @@ class OptimizationTree:
             tree._nodes[nid] = OptimNode.from_dict(nd)
         root = tree._nodes.get(ROOT_ID)
         if root is None:
-            log.warning("tree.json 缺失 root，重建空树")
+            log.warning("tree.json missing root node, rebuilding empty tree")
             tree.root = OptimNode(
                 node_id=ROOT_ID, iteration=-1, stage="root", variant="base")
             tree._nodes[ROOT_ID] = tree.root
@@ -226,11 +236,12 @@ class OptimizationTree:
 
 
 # ---------------------------------------------------------------------------
-# 原子化持久化
+# Atomic persistence
 # ---------------------------------------------------------------------------
 
 def save_tree_atomic(path: Path, tree: OptimizationTree) -> None:
-    """原子化写入树 JSON（先写 .tmp 再 os.replace，中途崩溃不会损坏旧文件）"""
+    """Atomic tree JSON write (write .tmp then os.replace; crash mid-write
+    won't corrupt the old file)"""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(
@@ -240,16 +251,16 @@ def save_tree_atomic(path: Path, tree: OptimizationTree) -> None:
 
 
 def load_tree(path: Path) -> OptimizationTree:
-    """加载树 JSON；文件破损时改名为 .corrupt 并返回空树"""
+    """Load tree JSON; if corrupted, rename to .corrupt and return empty tree"""
     if not path.is_file():
         return OptimizationTree()
     try:
         d = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(d, dict) and "nodes" in d:
             return OptimizationTree.from_dict(d)
-        raise ValueError("tree JSON 顶层缺少 nodes")
+        raise ValueError("tree JSON top-level missing 'nodes'")
     except (json.JSONDecodeError, ValueError) as e:
         corrupt = path.with_suffix(path.suffix + ".corrupt")
         os.replace(path, corrupt)
-        log.warning("树 JSON 损坏（%s），已改名 %s，重建空树", e, corrupt)
+        log.warning("Tree JSON corrupted (%s), renamed to %s, rebuilding empty tree", e, corrupt)
         return OptimizationTree()
