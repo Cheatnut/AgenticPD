@@ -1,0 +1,9 @@
+# 敏感信息：API key 绝不进 git
+.env
+
+# 运行产物（日志、history、生成的 fastroute.tcl 等）
+runs/
+
+# Python 缓存
+__pycache__/
+*.pyc
