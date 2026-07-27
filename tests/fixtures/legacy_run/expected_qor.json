@@ -1,0 +1,18 @@
+{
+  "_comment": "sky130hd/gcd baseline (--baseline-only, 2026-07-27). 这些值是手工从 6_report.json 核对的已知正确值，测试将用它们验证解析器。",
+  "json_source": {
+    "wns_ps": -1460.26,
+    "tns_ps": -61747.6,
+    "area_um2": 5400.18,
+    "power_mw": 9.37965,
+    "setup_violations": 65,
+    "hold_violations": 0
+  },
+  "text_fallback_approx": {
+    "_note": "fallback 从 rpt/log 正则提取，有舍入误差（rpt 只保留有限精度），不能与 JSON 精确相等",
+    "wns_ps_tolerance": 1.0,
+    "tns_ps_tolerance": 5.0,
+    "area_um2_tolerance": 1.0,
+    "power_mw_tolerance": 0.01
+  }
+}

@@ -1,0 +1,48 @@
+[
+  {
+    "iteration": 0,
+    "status": "ok",
+    "variant": "agenticpd_iter0",
+    "params": {
+      "FP": {
+        "CORE_UTILIZATION": 38,
+        "CORE_ASPECT_RATIO": 1.0
+      },
+      "PL": {},
+      "CTS": {},
+      "RT": {
+        "FASTROUTE_LAYER_ADJUSTMENT": 0.2,
+        "GRT_CONGESTION_ITERATIONS": 30
+      }
+    },
+    "qor": {
+      "wns_ps": -1460.26,
+      "tns_ps": -61747.6,
+      "area_um2": 5400.18,
+      "power_w": 0.00937965
+    },
+    "stage_qor": {
+      "FP": {
+        "2_1_floorplan_tns_ps": -48237.9,
+        "2_1_floorplan_ws_ps": -1154.1
+      },
+      "PL": {
+        "3_5_place_dp_tns_ps": -67519.0,
+        "3_5_place_dp_ws_ps": -1519.9
+      },
+      "CTS": {
+        "4_1_cts_tns_ps": -58393.6,
+        "4_1_cts_ws_ps": -1312.0
+      },
+      "RT": {
+        "5_1_grt_tns_ps": -67202.3,
+        "5_1_grt_ws_ps": -1538.6
+      }
+    },
+    "failed_stage": null,
+    "error": null,
+    "elapsed_s": 136.6,
+    "judge_decision": null,
+    "stage_reasons": {}
+  }
+]

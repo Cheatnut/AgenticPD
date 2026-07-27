@@ -1,0 +1,28 @@
+{
+  "_comment": "AgenticPD 环境快照 — 只记录变量名/版本号，不记录密钥、绝对路径或敏感值",
+  "generated_at": "2026-07-27T14:56:11.805478",
+  "schema_version": 1,
+  "orfs": {
+    "directory": "~/OpenROAD-flow-scripts",
+    "git_commit": "unresolved — ORFS 工作树不是 Git checkout，无法获取 SHA",
+    "note": "在学校服务器上部署前必须从 Git clone 并记录 commit SHA"
+  },
+  "openroad": {
+    "version": "26Q3-18-g5c5380c49a",
+    "binary": "tools/install/OpenROAD/bin/openroad",
+    "note": "本地编译，非 Docker 预编译包"
+  },
+  "pdk": {
+    "name": "sky130hd",
+    "revision": "unresolved — PDK 随 ORFS 依赖安装，未独立版本管理",
+    "note": "需确认 PDK 来源（SkyWater SKY130 公开 PDK）"
+  },
+  "python": {
+    "version": "3.10.12",
+    "executable": "python3"
+  },
+  "os": {
+    "name": "Ubuntu (WSL2)",
+    "kernel": "Linux x86_64"
+  }
+}
