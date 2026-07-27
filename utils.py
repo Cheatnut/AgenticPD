@@ -305,42 +305,6 @@ def qor_is_better(new: Optional[QoR], old: Optional[QoR],
 # History persistence
 # ---------------------------------------------------------------------------
 
-def save_history_atomic(path: Path, history: List[Dict[str, Any]]) -> None:
-    """Atomic history write: write to .tmp then os.replace; crash mid-write
-    won't corrupt the old file"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(history, ensure_ascii=False, indent=2),
-                   encoding="utf-8")
-    os.replace(tmp, path)
-
-
-def load_history(path: Path) -> List[Dict[str, Any]]:
-    """Load history; if file is corrupted, rename to .corrupt and return empty
-    list (fresh start)"""
-    log = logging.getLogger("utils")
-    if not path.is_file():
-        return []
-    try:
-        history = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(history, list):
-            return history
-        raise ValueError("history top-level is not a list")
-    except (json.JSONDecodeError, ValueError) as e:
-        corrupt = path.with_suffix(path.suffix + ".corrupt")
-        os.replace(path, corrupt)
-        log.warning("[utils] History corrupted (%s), renamed to %s, restarting", e, corrupt)
-        return []
-
-
-def save_tree_atomic(path: Path, tree) -> None:
-    """Atomic tree JSON write. This is a stub to avoid circular imports;
-    the actual call delegates to optimization_tree.save_tree_atomic.
-    """
-    from optimization_tree import save_tree_atomic as _impl
-    _impl(path, tree)
-
-
 def load_tree(path: Path):
     """Load tree JSON. Actual call delegates to optimization_tree.load_tree."""
     from optimization_tree import load_tree as _impl

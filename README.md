@@ -653,9 +653,6 @@ tree.json + history.json（Optimizer 维护，每轮结束原子落盘）
    - 阶段 QoR 追加到 live_upstream_qor 供下一个 StageAgent 使用
 3. **收尾**：`run_finish()` 执行 `make finish` 并解析最终四指标 QoR
 
-旧的 `branch_from()` 接口（一次 `make all` 加定点 clean）保留作为备用，但逐阶段
-流水线是 `Optimizer.run_iteration()` 的默认路径。
-
 **已知约束**：`SETUP_SLACK_MARGIN` 同时影响 FP/CTS/GRT 的 repair_timing。
 分支重跑下游时以本轮新值生效——上游固化产物中仍是分支前的旧值，这是阶段划分近似
 的固有误差（论文同样存在）。

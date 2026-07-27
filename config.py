@@ -343,12 +343,6 @@ class FrameworkConfig:
         return self.flow_dir / "objects" / self.platform / self.design / variant
 
     @property
-    def history_path(self) -> Path:
-        """History JSON file path (inside this run's run_dir)"""
-        assert self.run_dir is not None, "run_dir must be initialized by main.py first"
-        return self.run_dir / "history.json"
-
-    @property
     def tree_path(self) -> Path:
         """Optimization tree JSON file path (sibling to history.json)"""
         assert self.run_dir is not None, "run_dir must be initialized by main.py first"

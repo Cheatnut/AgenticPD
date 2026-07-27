@@ -229,29 +229,6 @@ class ORFSRunner:
                 f"under results/logs/reports/objects.  It may have been cleaned "
                 f"or never run.")
 
-    def branch_from(self, parent_variant: str, branch_stage: str,
-                    stage_params: Dict[str, Dict[str, Any]],
-                    new_variant: str, iteration: int) -> RunResult:
-        """Branch from an existing variant at a specific stage.
-
-        1. Copy the parent variant's artifacts
-        2. Clean the branch stage and all downstream stages
-        3. Run ``make all`` (which will reuse upstream artifacts and
-           re-run from the cleaned stage onward)
-        """
-        self.copy_parent_results(parent_variant, new_variant)
-        for stage_name in ("FP", "PL", "CTS", "RT"):
-            if stage_name == branch_stage or (
-                branch_stage and config.STAGES.index(stage_name) >= config.STAGES.index(branch_stage)
-            ):
-                clean_target = CLEAN_TARGETS.get(stage_name)
-                if clean_target:
-                    run_clean_make(self.cfg, new_variant, clean_target)
-        return self.run_flow(stage_params, new_variant, iteration)
-
-    # ------------------------------------------------------------------
-    # Result export
-    # ------------------------------------------------------------------
 
     def export_best(self, variant: str, best_entry: Dict[str, Any]) -> Path:
         """Export the best iteration's artifacts to agenticpd_best/.
@@ -365,10 +342,6 @@ class MockORFSRunner(ORFSRunner):
         for get_dir in (self.cfg.results_dir, self.cfg.objects_dir,
                         self.cfg.logs_dir, self.cfg.reports_dir):
             get_dir(new_variant).mkdir(parents=True, exist_ok=True)
-
-    def branch_from(self, parent_variant, branch_stage, stage_params,
-                    new_variant, iteration):
-        return self.run_flow(stage_params, new_variant, iteration)
 
     def export_best(self, variant, best_entry):
         d = self.cfg.results_dir(self.cfg.best_variant_name)

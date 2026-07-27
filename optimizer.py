@@ -25,7 +25,7 @@ from optimization_tree import (OptimizationTree, ROOT_ID,
 from orfs_interface import ORFSRunner, RunResult
 from managers import TrialManager
 from schemas.trial import TrialRecord, StageResult, FailureClass
-from utils import QoR, load_history, qor_is_better, save_history_atomic
+from utils import QoR, qor_is_better
 
 log = logging.getLogger("optimizer")
 
@@ -535,7 +535,7 @@ class Optimizer:
     # ------------------------------------------------------------------
     def run(self, resume: bool = False) -> None:
         if resume:
-            self.history = load_history(self.cfg.history_path)
+            self.history = _load_history_from_trials(self.cfg.run_dir)
             self.tree = load_tree(self.cfg.tree_path)
             self._recompute_best()
             log.info("[OPTIMIZER] --resume: loaded %d history entries, %d tree nodes, best=Iter #%s",
