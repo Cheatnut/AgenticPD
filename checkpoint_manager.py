@@ -194,6 +194,25 @@ class CheckpointManager:
             pass
         return None
 
+    def load_from_dir(self, trial_dir: Path, stage: str) -> Optional[CheckpointRef]:
+        """Load a checkpoint directly from a trial directory path.
+
+        This is the filesystem-level variant of ``load()`` — it does not
+        require a TrialRecord object, so it can be called before the trial
+        is fully loaded.
+        """
+        cp_path = trial_dir / "checkpoint.json"
+        if not cp_path.is_file():
+            return None
+        try:
+            data = json.loads(cp_path.read_text(encoding="utf-8"))
+            cp = CheckpointRef.from_dict(data)
+            if cp.stage == stage:
+                return cp
+        except (json.JSONDecodeError, KeyError):
+            pass
+        return None
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

@@ -155,14 +155,50 @@ class ORFSRunner:
     # Branching helpers
     # ------------------------------------------------------------------
 
+    def verify_parent_checkpoint(self, trial_id: str,
+                                   stage: str) -> bool:
+        """Verify that a parent trial's checkpoint artifacts are intact.
+
+        Uses CheckpointManager to load the checkpoint and verify every
+        artifact file exists with matching SHA-256.  Returns False if
+        verification fails (missing / tampered files), in which case the
+        caller should fall back to a full restart rather than branching.
+
+        Args:
+            trial_id: parent trial ID.
+            stage:    stage at which the checkpoint was created.
+        """
+        from pathlib import Path
+        from checkpoint_manager import CheckpointManager
+        cm = CheckpointManager(self.cfg.flow_dir)
+        # Try to load checkpoint from the trial's artifact directory
+        trial_dir = self.cfg.run_dir.parent / trial_id if self.cfg.run_dir else None
+        if trial_dir is None or not trial_dir.is_dir():
+            log.warning("[ORFS] Cannot verify checkpoint: trial dir not found for %s", trial_id)
+            return False
+        cp = cm.load_from_dir(trial_dir, stage)
+        if cp is None:
+            log.warning("[ORFS] No checkpoint found for trial %s @%s", trial_id, stage)
+            return False
+        ok, errors = cm.verify(cp)
+        if not ok:
+            log.error("[ORFS] Checkpoint %s verification FAILED:", cp.checkpoint_id)
+            for err in errors:
+                log.error("[ORFS]   %s", err)
+        return ok
+
     def copy_parent_results(self, parent_variant: str,
                             new_variant: str) -> None:
         """Copy a parent variant's four directory trees to a new variant.
 
         Prerequisite for branch execution: after copying, Bef-stage results
         are in place; only clean + make the target stage is needed.
+
+        Raises FileNotFoundError if none of the four source directories exist
+        (indicates the parent variant was never run or was cleaned).
         """
         cfg = self.cfg
+        any_copied = False
         for get_dir in (cfg.results_dir, cfg.objects_dir,
                         cfg.logs_dir, cfg.reports_dir):
             src = get_dir(parent_variant)
@@ -173,6 +209,7 @@ class ORFSRunner:
                     parent_variant, src.name,
                 )
                 continue
+            any_copied = True
             dst.mkdir(parents=True, exist_ok=True)
             for item in src.iterdir():
                 item_dst = dst / item.name
@@ -182,6 +219,11 @@ class ORFSRunner:
                     shutil.copytree(item, item_dst, symlinks=True)
                 else:
                     shutil.copy2(item, item_dst)
+        if not any_copied:
+            raise FileNotFoundError(
+                f"Parent variant '{parent_variant}' has no artifact directories "
+                f"under results/logs/reports/objects.  It may have been cleaned "
+                f"or never run.")
 
     def branch_from(self, parent_variant: str, branch_stage: str,
                     stage_params: Dict[str, Dict[str, Any]],
