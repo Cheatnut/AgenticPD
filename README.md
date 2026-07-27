@@ -322,25 +322,37 @@ $$
 ```bash
 cd flow
 
-# 完整优化：基线 + N 次迭代（需要 API key）
-python3 agenticpd/main.py --iterations 10 --platform nangate45 --design gcd
+# ---- 真实运行（需要 API key）----
 
-# 断点续跑（自动取 runs/ 下最新一次）
-python3 agenticpd/main.py --resume
+# Smoke test：只跑一次基线 ORFS，不调 LLM
+python3 agenticpd/main.py --baseline-only --design gcd
 
-# 调试模式（零 token / 零 EDA）：
-python3 agenticpd/main.py --parse-only base               # 只解析已有 variant 的 QoR
-python3 agenticpd/main.py --baseline-only                 # 只跑一次基线 ORFS
-python3 agenticpd/main.py --dry-run --mock-orfs --iterations 5  # 全 mock 秒级跑完
-python3 agenticpd/main.py --dry-run --iterations 2        # MockLLM + 真实 ORFS
+# 完整优化：基线 + N 次迭代
+python3 agenticpd/main.py --design gcd --iterations 3
 
-# 清理指定设计的所有产物（base 不受影响）：
-python3 agenticpd/tools/clean.py --target nangate45 gcd --dry-run   # 预览
-python3 agenticpd/tools/clean.py --target nangate45 gcd             # 确认后删除
-python3 agenticpd/tools/clean.py --target nangate45 gcd --yes       # 跳过确认直接删
+# 断点续跑（自动取 runs/ 下最新一次会话目录）
+python3 agenticpd/main.py --resume latest
 
-# 从已有运行生成树可视化：
-python3 agenticpd/tools/visualize.py runs/20260718_210019
+# ---- 调试模式（零 token / 零 EDA）----
+
+# 全 mock：MockLLM + MockORFS，秒级跑完，验证控制逻辑
+python3 agenticpd/main.py --dry-run --mock-orfs --iterations 5
+
+# MockLLM + 真实 ORFS：LLM 不花钱，但会真实跑 EDA 流程
+python3 agenticpd/main.py --dry-run --iterations 2
+
+# ---- 工具 ----
+
+# 清理指定设计的所有产物（base 基线不受影响）
+python3 agenticpd/tools/clean.py sky130hd gcd --dry-run   # 预览
+python3 agenticpd/tools/clean.py sky130hd gcd --yes       # 确认并删除
+
+# 查看 trial 记录
+python3 agenticpd/tools/trial_inspect.py --list --runs-dir agenticpd/runs/<session>
+python3 agenticpd/tools/trial_inspect.py <trial_id> --stages --runs-dir agenticpd/runs/<session>
+
+# 从已有运行生成优化树可视化
+python3 agenticpd/tools/visualize.py agenticpd/runs/<session>
 ```
 
 常用选项：`--design`、`--platform`、`--timeout`（秒）、`--wns-tol`/`--tns-tol`（ps）、
@@ -348,17 +360,30 @@ python3 agenticpd/tools/visualize.py runs/20260718_210019
 
 ## 输出位置
 
+### ORFS 产物（`flow/` 下）
+
 | 内容 | 路径 | 说明 |
 |---|---|---|
-| 最佳产物 | `flow/results/<plat>/<design>/agenticpd_best/` | 最终 GDS/DEF/网表 + 报告 + `agenticpd_summary.json` |
-| 每轮迭代产物 | `flow/{results,logs,reports,objects}/<plat>/<design>/agenticpd_iter<N>/` | FLOW_VARIANT 隔离，`base` 永不触碰 |
-| 优化树 PNG | `runs/<时间戳>/optimization_tree.png` | 每次运行结束后自动生成 |
-| history.json | `runs/<时间戳>/history.json` | 平面优化日志（完整字段见下方） |
-| tree.json | `runs/<时间戳>/tree.json` | 优化树 T：节点 + 父子关系 + E(n) |
-| agenticpd.log | `runs/<时间戳>/agenticpd.log` | 框架日志；`--log-level DEBUG` 含完整 prompt |
-| iterN_{stage}.make.log | `runs/<时间戳>/iterN_{stage}.make.log` | 各阶段 ORFS make stdout/stderr |
-| fastroute_iterN.tcl | `runs/<时间戳>/fastroute_iterN.tcl` | 每轮生成的定制布线层容量脚本 |
-| config_snapshot.json | `runs/<时间戳>/config_snapshot.json` | 当次运行的完整配置存档 |
+| 最佳产物 | `results/<plat>/<design>/agenticpd_best/` | 最终 GDS/DEF/网表 + 报告 + `agenticpd_summary.json` |
+| 每轮迭代产物 | `{results,logs,reports,objects}/<plat>/<design>/agenticpd_iter<N>/` | FLOW_VARIANT 隔离，`base` 永不触碰 |
+
+### 会话目录（`agenticpd/runs/<YYYYMMDD_HHMMSS>/`）
+
+每次 `main.py` 调用创建一个独立会话目录：
+
+| 内容 | 路径 | 说明 |
+|---|---|---|
+| **trial 记录** | `<trial_id>/trial.json` | **阶段 B/C 新增**。每个 trial 的完整 `TrialRecord`（lineage/params/stage_results/final_qor/checkpoint），含 per-stage `elapsed_s` 和 `param_diff` |
+| **trial 索引** | `trials.jsonl` | **阶段 B 新增**。本会话所有 trial 的全局索引（append-only，reader 去重） |
+| 优化树 PNG | `optimization_tree.png` | 每次运行结束后自动生成 |
+| history.json | `history.json` | 旧格式平面优化日志（与 `trials.jsonl` 共存过渡） |
+| tree.json | `tree.json` | 优化树 T：节点 + 父子关系 + E(n) |
+| agenticpd.log | `agenticpd.log` | 框架日志；`--log-level DEBUG` 含完整 prompt |
+| iterN_{stage}.make.log | `iterN_{stage}.make.log` | 各阶段 ORFS make stdout/stderr |
+| fastroute_iterN.tcl | `fastroute_iterN.tcl` | 每轮生成的定制布线层容量脚本 |
+| config_snapshot.json | `config_snapshot.json` | 当次运行的完整配置存档 |
+
+> **查看 trial**：`python3 tools/trial_inspect.py --list --runs-dir runs/<session>`
 
 ## 日志格式
 
@@ -679,9 +704,9 @@ CLI 参数（`--iterations`、`--design`、`--platform`、`--timeout`、`--wns-t
 
 ---
 
-## 树可视化 — `visualize_tree.py`
+## 树可视化 — `tools/visualize.py`
 
-`main.py` 运行结束后自动调用，在 run_dir 下生成 `optimization_tree.png`。
+`main.py` 运行结束后自动调用，在会话目录下生成 `optimization_tree.png`。
 
 效果：
 - 5 层布局（root → FP → PL → CTS → RT），层内按迭代号左小右大排列
@@ -694,7 +719,7 @@ CLI 参数（`--iterations`、`--design`、`--platform`、`--timeout`、`--wns-t
 
 ```bash
 # 也可独立运行
-python3 agenticpd/tools/visualize.py runs/20260718_210019
+python3 agenticpd/tools/visualize.py <runs_session_dir>
 ```
 
 ## 产物清理 — `clean.py`
@@ -774,7 +799,8 @@ Windows 通过 `\\wsl.localhost` UNC 路径 Edit `.py` 文件后，WSL 侧已有
 mtime 可能比新 `.py` 更新（9p 同步延迟），Python 会加载旧 bytecode。
 **每次 Edit 后必须先清 pycache**：
 ```bash
-rm -rf flow/agenticpd/__pycache__/
+cd ~/OpenROAD-flow-scripts/flow/agenticpd
+find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null
 ```
 
 ### 2. finish__design__instance__area 重复键
@@ -783,9 +809,14 @@ rm -rf flow/agenticpd/__pycache__/
 后者是 stdcell-only 面积（正确值）。依赖 CPython `json.load` 后键覆盖取后者。
 见 `utils.py::QoR.from_report_json()`。
 
-### 3. 逐阶段执行与批量生成的近似
+### 3. history.json 与 trial.json 双写过渡
 
-论文 §6 第 10 行在每个下游阶段执行后才获得该阶段 QoR 并传给下一个阶段。
-当前实现通过逐阶段流水线（`run_stage()` 后立即将真实 QoR 追加到
-live_upstream_qor）部分缓解了此问题，但当前阶段 StageAgent 的 prompt 中
-仍然不包含同级下游阶段（尚未执行）的 QoR，对同级串行依赖的建模是近似。
+当前 `optimizer.py` 同时维护旧格式 `history.json` 和新格式 `trial.json`。
+两份数据独立写入，存在不一致风险。后续阶段将 `history.json` 改为从
+`trials.jsonl` 派生，消除双写。
+
+### 4. per-stage elapsed_s 仅迭代模式有效
+
+`--baseline-only` 使用 `make all` 全流程运行，不拆分单阶段，因此 baseline
+trial 的 `stage_results[*].elapsed_s` 为 0。只有 `--iterations N` 的逐阶段
+流水线路径会填充真实 per-stage 耗时。
