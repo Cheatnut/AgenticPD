@@ -27,7 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from schemas.trial import TrialRecord
-from trial_manager import TrialManager
+from managers import TrialManager
 
 
 def _print_trial(trial, show_stages: bool = False) -> None:

@@ -25,8 +25,8 @@ from schemas.trial import (
     TrialRecord, StageResult, CheckpointRef, FailureClass,
     append_trial_to_jsonl, load_trials_from_jsonl,
 )
-from trial_manager import TrialManager
-from checkpoint_manager import CheckpointManager
+from managers import TrialManager
+from managers import CheckpointManager
 
 
 class TrialRecordIntegrationTest(unittest.TestCase):

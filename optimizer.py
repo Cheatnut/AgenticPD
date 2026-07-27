@@ -22,7 +22,7 @@ from config import FrameworkConfig
 from optimization_tree import (OptimizationTree, ROOT_ID,
                                load_tree, save_tree_atomic)
 from orfs_interface import ORFSRunner, RunResult
-from trial_manager import TrialManager
+from managers import TrialManager
 from schemas.trial import TrialRecord, StageResult, FailureClass
 from utils import QoR, load_history, qor_is_better, save_history_atomic
 
@@ -61,7 +61,7 @@ def _load_history_from_trials(run_dir: "Path") -> "List[Dict[str, Any]]":
     This replaces the old load_history() that read history.json.
     """
     from pathlib import Path
-    from trial_manager import TrialManager
+    from managers import TrialManager
     mgr = TrialManager(Path(run_dir))
     trials = mgr.list_all()
     history: List[Dict[str, Any]] = []

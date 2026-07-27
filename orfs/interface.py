@@ -169,7 +169,7 @@ class ORFSRunner:
             stage:    stage at which the checkpoint was created.
         """
         from pathlib import Path
-        from checkpoint_manager import CheckpointManager
+        from managers import CheckpointManager
         cm = CheckpointManager(self.cfg.flow_dir)
         # Try to load checkpoint from the trial's artifact directory
         trial_dir = self.cfg.run_dir.parent / trial_id if self.cfg.run_dir else None

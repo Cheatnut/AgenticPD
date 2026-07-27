@@ -15,8 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent)
                    if "__file__" in dir() else ".")
 
 from schemas.trial import TrialRecord, StageResult, CheckpointRef, FailureClass
-from trial_manager import TrialManager
-from checkpoint_manager import CheckpointManager
+from managers import TrialManager
+from managers import CheckpointManager
 
 # ---- Config ----
 RUNS_DIR = Path("/home/cheatnut/OpenROAD-flow-scripts/flow/agenticpd/runs")

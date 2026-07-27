@@ -244,12 +244,12 @@ $$
 | `schemas/trial.py` | 465 | **四个核心数据类**。`FailureClass`（5 种失败类型枚举）、`StageResult`（单阶段执行记录，elapsed/exit_code/stage_qor/failure）、`CheckpointRef`（可恢复存档点，artifact manifest + SHA-256）、`TrialRecord`（一次完整 RTL→GDS 运行，lineage/QoR/stage_results/checkpoint）。含 JSONL 追加/读取工具 |
 | `schemas/__init__.py` | 13 | 包导出 |
 
-### 2.5 管理层（阶段 B）
+### 2.5 managers/ — 管理层（阶段 B）
 
 | 文件 | 行数 | 职责 |
 |------|------|------|
-| `trial_manager.py` | 263 | **Trial 生命周期管理**。`TrialManager`：`create()` 生成 UUID + 写入 `runs/<id>/trial.json`；`update()` 覆盖 + 追加 `trials.jsonl` 索引；`get/list_all/list_by_status/latest` 查询。原子写入（.tmp → os.replace） |
-| `checkpoint_manager.py` | 392 | **Checkpoint 生命周期管理**。`CheckpointManager`：`create()` 扫描 ORFS 产物 + SHA-256 哈希 → `CheckpointRef`；`verify()` 完整性校验；`is_compatible()` 基于 `ParameterSpec.affects` 的阶段感知兼容性判断；`param_hash()` 确定性参数哈希 |
+| `managers/trial_manager.py` | 263 | **Trial 生命周期管理**。`TrialManager`：`create()` 生成 UUID + 写入 `runs/<id>/trial.json`；`update()` 覆盖 + 追加 `trials.jsonl` 索引；`get/list_all/list_by_status/latest` 查询。原子写入（.tmp → os.replace） |
+| `managers/checkpoint_manager.py` | 392 | **Checkpoint 生命周期管理**。`CheckpointManager`：`create()` 扫描 ORFS 产物 + SHA-256 哈希 → `CheckpointRef`；`verify()` 完整性校验；`is_compatible()` 基于 `ParameterSpec.affects` 的阶段感知兼容性判断；`param_hash()` 确定性参数哈希 |
 
 ### 2.6 tools/ — CLI 工具
 
