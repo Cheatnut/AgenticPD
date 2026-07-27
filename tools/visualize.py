@@ -60,10 +60,41 @@ def load_tree(tree_path: Path) -> Dict[str, Dict[str, Any]]:
 
 
 def load_history(history_path: Path) -> List[Dict[str, Any]]:
-    """Load history.json, returning entries as a list."""
+    """Load history from trials.jsonl (preferred) or history.json (legacy).
+
+    Detects the format automatically:
+    - .jsonl: one JSON object per line (TrialRecord format)
+    - .json:  a JSON array of flat dicts (old history.json format)
+    """
     if not history_path.is_file():
         return []
-    return json.loads(history_path.read_text(encoding="utf-8"))
+    text = history_path.read_text(encoding="utf-8")
+    # Detect format: JSONL starts with "{" on the first line
+    if text.strip().startswith("{"):
+        # trials.jsonl: one TrialRecord per line
+        entries = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                tr = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            # Convert TrialRecord to history-entry format
+            entries.append({
+                "iteration": len(entries),
+                "status": tr.get("status", "?"),
+                "params": tr.get("params", {}),
+                "qor": tr.get("final_qor"),
+                "elapsed_s": sum(
+                    sr.get("elapsed_s", 0) for sr in tr.get("stage_results", [])
+                ),
+            })
+        return entries
+    else:
+        # Old history.json: JSON array
+        return json.loads(text)
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +231,10 @@ def visualize_tree(run_dir: Path,
         return None
 
     nodes = load_tree(tree_path)
-    history_path = run_dir / "history.json"
+    # Prefer trials.jsonl (stage C); fall back to history.json for old runs
+    history_path = run_dir / "trials.jsonl"
+    if not history_path.is_file():
+        history_path = run_dir / "history.json"
     history = load_history(history_path) if history_path.is_file() else []
     best_iter = find_best_iteration(history)
 

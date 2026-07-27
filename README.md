@@ -809,13 +809,13 @@ find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null
 后者是 stdcell-only 面积（正确值）。依赖 CPython `json.load` 后键覆盖取后者。
 见 `utils.py::QoR.from_report_json()`。
 
-### 3. history.json 与 trial.json 双写过渡
+### 3. 已解决：history.json 与 trial.json 双写
 
-当前 `optimizer.py` 同时维护旧格式 `history.json` 和新格式 `trial.json`。
-两份数据独立写入，存在不一致风险。后续阶段将 `history.json` 改为从
-`trials.jsonl` 派生，消除双写。
+阶段 C 已消除双写：`optimizer.py._persist()` 不再写入 `history.json`。
+可视化从 `trials.jsonl` 读取（自动检测格式，兼容旧 `history.json`）。
+`--resume` 从 `trials.jsonl` 重建内存历史。
 
-### 4. per-stage elapsed_s 仅迭代模式有效
+### 3. per-stage elapsed_s 仅迭代模式有效
 
 `--baseline-only` 使用 `make all` 全流程运行，不拆分单阶段，因此 baseline
 trial 的 `stage_results[*].elapsed_s` 为 0。只有 `--iterations N` 的逐阶段

@@ -53,6 +53,38 @@ def _downstream_stages(branch_stage: str) -> List[str]:
     return [branch_stage] + _aft_stages(branch_stage)
 
 
+def _load_history_from_trials(run_dir: "Path") -> "List[Dict[str, Any]]":
+    """Rebuild the in-memory history list from trials.jsonl.
+
+    Converts each TrialRecord back to the flat dict format expected by
+    agents.py, visualize.py, and the Optimizer's internal loops.
+    This replaces the old load_history() that read history.json.
+    """
+    from pathlib import Path
+    from trial_manager import TrialManager
+    mgr = TrialManager(Path(run_dir))
+    trials = mgr.list_all()
+    history: List[Dict[str, Any]] = []
+    for t in sorted(trials, key=lambda t: t.trial_id):
+        entry: Dict[str, Any] = {
+            "iteration": len(history),  # reconstruct sequential iteration number
+            "status": t.status,
+            "variant": "",  # not stored in TrialRecord; acceptable loss for resume
+            "params": t.params,
+            "qor": t.final_qor,
+            "stage_qor": {sr.stage: sr.stage_qor for sr in t.stage_results},
+            "failed_stage": t.failed_stage,
+            "error": t.error_message,
+            "elapsed_s": t.elapsed_s,
+            "branch_node": "",
+            "branch_stage": t.branch_stage,
+            "judge_decision": None,
+            "stage_reasons": {},
+        }
+        history.append(entry)
+    return history
+
+
 def _uid_to_iter(node_id: str) -> int:
     """Extract iteration number from node_id (e.g. "iter3_PL"), with fallback."""
     try:
@@ -172,8 +204,12 @@ class Optimizer:
         return candidates[-window:]
 
     def _persist(self) -> None:
-        """Atomically persist tree and history at the end of each iteration."""
-        save_history_atomic(self.cfg.history_path, self.history)
+        """Atomically persist the optimisation tree.
+
+        History is no longer written separately — it is derived from
+        trials.jsonl (via TrialManager).  This eliminates the dual-write
+        between history.json and trial.json.
+        """
         save_tree_atomic(self.cfg.tree_path, self.tree)
 
     # ------------------------------------------------------------------
