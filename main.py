@@ -182,7 +182,7 @@ def main() -> None:
     # numbered variant directories (e.g. old run had 10 iters → iter4..9 persist).
     n_wiped = runner.wipe_all_variants()
     if n_wiped:
-        log.info('[MAIN] pre-run wiped %d stale variant directories from previous run', n_wiped)
+        log.debug('[MAIN] pre-run wiped %d stale variant directories from previous run', n_wiped)
 
     if args.baseline_only:
         # Baseline only: no LLM needed, run iteration #0 directly

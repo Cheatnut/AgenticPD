@@ -139,10 +139,23 @@ class Optimizer:
                      branch_stage: Optional[str] = None,
                      parent_params: Optional[dict] = None) -> TrialRecord:
         """Create a TrialRecord and persist a 'running' entry before flow start."""
+        # Compute reproducibility hashes
+        import hashlib
+        config_hash = None
+        env_hash = None
+        if self.cfg.run_dir:
+            snap = self.cfg.run_dir / "config_snapshot.json"
+            if snap.is_file():
+                config_hash = hashlib.sha256(snap.read_bytes()).hexdigest()[:16]
+            env_manifest = self.cfg.flow_dir / "agenticpd" / "environment_manifest.json"
+            if env_manifest.is_file():
+                env_hash = hashlib.sha256(env_manifest.read_bytes()).hexdigest()[:16]
         trial = self.trial_mgr.create(
             experiment_id="agenticpd-gcd",
             parent_trial_id=parent_trial_id,
             branch_stage=branch_stage,
+            config_hash=config_hash,
+            env_hash=env_hash,
         )
         # Compute param_diff against parent (if available)
         self._current_trial = trial

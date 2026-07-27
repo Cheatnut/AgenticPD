@@ -319,7 +319,7 @@ class ORFSRunner:
                 if d.name.startswith(self.cfg.variant_prefix):
                     shutil.rmtree(d)
                     removed += 1
-                    log.info("[ORFS] pre-run wipe: %s", d)
+                    log.debug("[ORFS] pre-run wipe: %s", d)
         return removed
 
 
@@ -340,20 +340,21 @@ class MockORFSRunner(ORFSRunner):
         qor = self._mock_qor(stage_params)
         sq = self._mock_stage_qor(stage_params)
         return RunResult(ok=True, variant=variant, qor=qor, stage_qor=sq,
-                         elapsed_s=0.05)
+                         elapsed_s=0.05, make_log_path="[mock] no real log")
 
     def run_stage(self, stage, stage_params, variant, iteration):
         time.sleep(0.01)
         sq = self._mock_stage_qor(stage_params)
         from schemas.trial import StageResult
         return StageResult(stage=stage, status="ok", elapsed_s=0.02,
-                          exit_code=0, stage_qor=sq.get(stage, {}))
+                          exit_code=0, stage_qor=sq.get(stage, {}),
+                          log_path="[mock] no real log")
 
     def run_finish(self, stage_params, variant, iteration):
         sq = self._mock_stage_qor(stage_params)
         qor = self._mock_qor(stage_params)
         return RunResult(ok=True, variant=variant, qor=qor, stage_qor=sq,
-                         elapsed_s=0.02)
+                         elapsed_s=0.02, make_log_path="[mock] no real log")
 
     def copy_parent_results(self, parent_variant: str, new_variant: str) -> None:
         # No-op in mock mode: create empty dirs without looking for real artifacts
