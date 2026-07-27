@@ -8,9 +8,6 @@ timeout / process-group cleanup, and log capture.
 from __future__ import annotations
 
 import logging
-import os
-import signal
-import subprocess
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -27,40 +24,36 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Low-level subprocess helpers
+# Backend-aware execution helpers
 # ---------------------------------------------------------------------------
+# Default backend: local subprocess.  Override per-invocation for Slurm.
+_default_backend: "ExecutionBackend | None" = None
+
+
+def _get_backend() -> "ExecutionBackend":
+    """Lazy-init the default execution backend."""
+    global _default_backend
+    if _default_backend is None:
+        from orfs.backend import LocalBackend
+        _default_backend = LocalBackend()
+    return _default_backend
+
+
+def set_backend(backend: "ExecutionBackend") -> None:
+    """Set the global execution backend (e.g. to SlurmBackend)."""
+    global _default_backend
+    _default_backend = backend
+
 
 def run_make(cfg: FrameworkConfig, cmd: List[str],
              make_log_path: Path) -> Tuple[int, bool]:
-    """Execute ``make ...`` with timeout and process-group cleanup.
-
-    Uses ``start_new_session=True`` so that ``killpg`` on timeout cleans up
-    all child processes (yosys, openroad, ...) spawned by make.
+    """Execute ``make ...`` via the configured execution backend.
 
     Returns:
         (exit_code, timed_out): exit_code is -1 when timed out.
     """
-    make_log_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(make_log_path, "w", encoding="utf-8") as fout:
-        proc = subprocess.Popen(
-            cmd, cwd=cfg.flow_dir,
-            stdout=fout, stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-        try:
-            returncode = proc.wait(timeout=cfg.timeout_s)
-            return returncode, False
-        except subprocess.TimeoutExpired:
-            log.error(
-                "[ORFS] make timeout (>%ds), killing process group %d",
-                cfg.timeout_s, proc.pid,
-            )
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            proc.wait()
-            return -1, True
+    result = _get_backend().execute(cmd, cfg.flow_dir, make_log_path, cfg.timeout_s)
+    return result.exit_code, result.timed_out
 
 
 def tail_log(path: Path, lines: int = 20) -> str:
