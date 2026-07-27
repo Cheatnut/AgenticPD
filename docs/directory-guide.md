@@ -23,7 +23,7 @@
 
 | 文件 | 行数 | 职责 |
 |------|------|------|
-| `main.py` | 208 | CLI 入口：`--baseline-only` / `--dry-run` / `--resume` / `--iterations N`，初始化 LLM/Runner/Optimizer，启动优化循环 |
+| `main.py` | 208 | CLI 入口：`--baseline-only` / `--mock-llm` / `--resume` / `--iterations N`，初始化 LLM/Runner/Optimizer，启动优化循环 |
 | `config.py` | 361 | **全局配置唯一来源**。定义 9 个可调参数（`ParamSpec`，含类型/范围/默认值/影响阶段）、`FrameworkConfig`（路径/超参/LLM 设置）、全局路径常量 |
 | `optimizer.py` | 501 | **优化主循环**。实现论文 §6 伪代码：建树 → ObservationTool → Judge 决策 → 分支 → 逐阶段流水线 → 记录历史。阶段 C 接入 `TrialManager` |
 | `agents.py` | 573 | **Agent 层**。`JudgeAgent`（全局导航，选分支节点和阶段）、`StageAgent ×4`（FP/PL/CTS/RT 各阶段参数生成）、`ObservationTool`（计算 E(n) 探索平衡度 + B(s) 阶段瓶颈） |
@@ -61,7 +61,7 @@
 
 | 文件 | 行数 | 职责 |
 |------|------|------|
-| `tools/clean.py` | 224 | **产物清理**。删除指定 platform/design 的所有 variant（除 base）+ 匹配的 runs/ 会话目录。`--dry-run` 预览、`--yes` 跳过确认 |
+| `tools/clean.py` | 224 | **产物清理**。删除指定 platform/design 的所有 variant（除 base）+ 匹配的 runs/ 会话目录。`--mock-llm` 预览、`--yes` 跳过确认 |
 | `tools/visualize.py` | 384 | **优化树可视化**。从 `tree.json` + `history.json` 生成 PNG（5 层布局，绿色基线路径 + 红色最佳路径） |
 | `tools/trial_inspect.py` | 199 | **Trial 查看器**。`--list` / `--latest` / `--failed` / `<trial_id>` `--stages`。支持 JSONL 索引和 `*/trial.json` 扫描两种模式 |
 

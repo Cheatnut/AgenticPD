@@ -75,10 +75,10 @@ python3 agenticpd/main.py --resume latest
 # ---- 调试模式（零 token / 零 EDA）----
 
 # 全 mock：MockLLM + MockORFS，秒级跑完，验证控制逻辑
-python3 agenticpd/main.py --dry-run --mock-orfs --iterations 5
+python3 agenticpd/main.py --mock-llm --mock-orfs --iterations 5
 
 # MockLLM + 真实 ORFS：LLM 不花钱，但会真实跑 EDA 流程
-python3 agenticpd/main.py --dry-run --iterations 2
+python3 agenticpd/main.py --mock-llm --iterations 2
 
 # ---- 工具 ----
 

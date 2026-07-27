@@ -10,7 +10,7 @@ Contains:
      for a retry (max_json_retries times);
    - When all retries exhausted, raise LLMError; upstream (agents/optimizer)
      decides the fallback strategy.
-2. MockLLMClient: zero-token mock client (--dry-run), returns deterministic
+2. MockLLMClient: zero-token mock client (--mock-llm), returns deterministic
    fixed decisions/params per tag, for offline debugging of the optimization
    main loop and prompt rendering.
 """
@@ -130,7 +130,7 @@ class LLMClient:
 
 
 class MockLLMClient:
-    """Zero-token mock client (--dry-run): same signature as LLMClient.
+    """Zero-token mock client (--mock-llm): same signature as LLMClient.
 
     Behavior (deterministic, for easy debug assertions):
     - tag == "judge": round-robin target stages FP→PL→CTS→RT, fixed hints;

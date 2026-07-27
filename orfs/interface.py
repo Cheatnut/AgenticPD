@@ -326,6 +326,12 @@ class MockORFSRunner(ORFSRunner):
         return RunResult(ok=True, variant=variant, qor=qor, stage_qor=sq,
                          elapsed_s=0.02)
 
+    def copy_parent_results(self, parent_variant: str, new_variant: str) -> None:
+        # No-op in mock mode: create empty dirs without looking for real artifacts
+        for get_dir in (self.cfg.results_dir, self.cfg.objects_dir,
+                        self.cfg.logs_dir, self.cfg.reports_dir):
+            get_dir(new_variant).mkdir(parents=True, exist_ok=True)
+
     def branch_from(self, parent_variant, branch_stage, stage_params,
                     new_variant, iteration):
         return self.run_flow(stage_params, new_variant, iteration)

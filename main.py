@@ -16,10 +16,10 @@ Common modes:
     python3 agenticpd/main.py --baseline-only
 
     # Full mock debugging (zero token, zero EDA, finishes in seconds)
-    python3 agenticpd/main.py --dry-run --mock-orfs --iterations 5
+    python3 agenticpd/main.py --mock-llm --mock-orfs --iterations 5
 
     # MockLLM + real ORFS (zero token end-to-end)
-    python3 agenticpd/main.py --dry-run --iterations 2
+    python3 agenticpd/main.py --mock-llm --iterations 2
 
     # Resume from a previous run
     python3 agenticpd/main.py --resume [run_dir, defaults to latest]
@@ -60,7 +60,7 @@ def parse_args() -> argparse.Namespace:
                         help="WNS tolerance in ps for QoR comparison (default from config.py)")
     parser.add_argument("--tns-tol", type=float, default=None,
                         help="TNS tolerance in ps for QoR comparison (default from config.py)")
-    parser.add_argument("--dry-run", action="store_true",
+    parser.add_argument("--mock-llm", action="store_true",
                         help="Use MockLLMClient (zero token, deterministic decisions)")
     parser.add_argument("--mock-orfs", action="store_true",
                         help="Use MockORFSRunner (no real EDA, synthesize QoR in seconds)")
@@ -175,10 +175,10 @@ def main() -> None:
         sys.exit(0 if result.ok else 1)
 
     # 4) Full optimization: choose LLM client (real / mock)
-    if args.dry_run:
+    if args.mock_llm:
         from llm_interface import MockLLMClient
         llm = MockLLMClient(cfg)
-        log.info("[MAIN] --dry-run: using MockLLMClient (zero token)")
+        log.info("[MAIN] --mock-llm: using MockLLMClient (zero token)")
     else:
         from llm_interface import LLMClient, LLMError
         try:
