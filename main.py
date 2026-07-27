@@ -186,7 +186,12 @@ def main() -> None:
 
     # Generate optimization tree visualization
     try:
-        from visualize_tree import visualize_tree
+        # tools/ 子目录：将 tools 路径加入 sys.path
+        import sys as _sys
+        _tools_dir = str(AGENTICPD_DIR / "tools")
+        if _tools_dir not in _sys.path:
+            _sys.path.insert(0, _tools_dir)
+        from visualize import visualize_tree
         vis_path = visualize_tree(cfg.run_dir)
         if vis_path:
             log.info("[MAIN] Optimization tree visualization saved to %s", vis_path)

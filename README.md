@@ -200,20 +200,43 @@ $$
 
 ```
 flow/agenticpd/
-├── .env                      # 放API key 
+├── AGENTS.md                 # Codex 工程规范（与 CLAUDE.md 内容一致）
+├── CLAUDE.md                 # Claude 工程规范（与 AGENTS.md 内容一致）
+├── README.md                 # 本文件
+├── Makefile                  # 验证入口：make test / make check
+├── .env / .env.example       # API key（不提交）
 ├── .gitignore
+├── requirements.txt
+├── environment_manifest.json # 环境版本快照
+│
+├── main.py                   # CLI 入口：--baseline-only / --dry-run / --resume
 ├── config.py                 # 全局配置（参数空间、路径、超参，唯一配置来源）
+│
+├── optimizer.py              # 主循环：建树、基线、观测概要、分支决策、阶段流水线调度
+├── agents.py                 # BaseAgent / JudgeAgent / StageAgent ×4 / ObservationTool
 ├── optimization_tree.py      # 优化树 T：节点增删查、E(n) 维护、JSON 序列化
 ├── orfs_interface.py         # ORFS 调用：全跑、分支、逐阶段、QoR 解析、最佳导出
-├── llm_interface.py          # DeepSeek API 客户端 + MockLLMClient（重试、JSON 回喂重问）
-├── agents.py                 # BaseAgent / JudgeAgent / StageAgent ×4 / ObservationTool
-├── optimizer.py              # 主循环：建树、基线、观测概要、分支决策、阶段流水线调度
-├── utils.py                  # 工具集:QoR 数据类、JSON 提取、比较器、日志
-├── main.py                   # 主程序文件,CLI 入口
-├── visualize_tree.py         # 树可视化 → optimization_tree.png（main.py 完成后自动调用）
-├── clean.py                  # 产物清理（按 platform/design 删除，base 受保护）
-├── requirements.txt
-└── runs/                     # 各次运行的工作目录（自动创建）
+├── llm_interface.py          # DeepSeek API 客户端 + MockLLMClient
+├── utils.py                  # 工具集：QoR 数据类、JSON 提取、比较器、日志
+│
+├── tools/                    # CLI 工具脚本（阶段 A 整理）
+│   ├── clean.py              # 产物清理（按 platform/design 删除，base 受保护）
+│   └── visualize.py          # 树可视化 → optimization_tree.png
+│
+├── configs/                  # 实验配置
+│   └── experiments/          # 每次实验一份 YAML
+│       └── smoke.yaml        # 阶段 A smoke test 完整声明
+│
+├── docs/                     # 设计文档（中文）
+│   ├── experiment-contract.md # 实验契约：QoR 来源、评价函数、公平性约束
+│   └── 问题.txt              # 开发过程中的未解决问题
+│
+├── tests/                    # 纯 Python 测试（不依赖 EDA/LLM/网络）
+│   ├── test_qor.py           # QoR 解析器回归（21 例）
+│   └── fixtures/legacy_run/  # gcd smoke test 只读回归证据
+│
+├── attachments/              # 图片
+└── runs/                     # 各次运行的工作目录（不进 git）
 ```
 
 ## 环境准备
@@ -256,12 +279,12 @@ python3 agenticpd/main.py --dry-run --mock-orfs --iterations 5  # 全 mock 秒�
 python3 agenticpd/main.py --dry-run --iterations 2        # MockLLM + 真实 ORFS
 
 # 清理指定设计的所有产物（base 不受影响）：
-python3 agenticpd/clean.py --target nangate45 gcd --dry-run   # 预览
-python3 agenticpd/clean.py --target nangate45 gcd             # 确认后删除
-python3 agenticpd/clean.py --target nangate45 gcd --yes       # 跳过确认直接删
+python3 agenticpd/tools/clean.py --target nangate45 gcd --dry-run   # 预览
+python3 agenticpd/tools/clean.py --target nangate45 gcd             # 确认后删除
+python3 agenticpd/tools/clean.py --target nangate45 gcd --yes       # 跳过确认直接删
 
 # 从已有运行生成树可视化：
-python3 agenticpd/visualize_tree.py runs/20260718_210019
+python3 agenticpd/tools/visualize.py runs/20260718_210019
 ```
 
 常用选项：`--design`、`--platform`、`--timeout`（秒）、`--wns-tol`/`--tns-tol`（ps）、
@@ -615,7 +638,7 @@ CLI 参数（`--iterations`、`--design`、`--platform`、`--timeout`、`--wns-t
 
 ```bash
 # 也可独立运行
-python3 agenticpd/visualize_tree.py runs/20260718_210019
+python3 agenticpd/tools/visualize.py runs/20260718_210019
 ```
 
 ## 产物清理 — `clean.py`
@@ -626,17 +649,17 @@ python3 agenticpd/visualize_tree.py runs/20260718_210019
 
 ```bash
 # ---- 预览（不删文件，先看清理范围）----
-python3 agenticpd/clean.py sky130hd gcd --dry-run
+python3 agenticpd/tools/clean.py sky130hd gcd --dry-run
 
 # ---- 交互确认后删除 ----
-python3 agenticpd/clean.py sky130hd gcd
+python3 agenticpd/tools/clean.py sky130hd gcd
 
 # ---- 跳过确认直接删除 ----
-python3 agenticpd/clean.py sky130hd gcd --yes
+python3 agenticpd/tools/clean.py sky130hd gcd --yes
 
 # 两种写法等效：
-python3 agenticpd/clean.py sky130hd gcd
-python3 agenticpd/clean.py --target sky130hd gcd
+python3 agenticpd/tools/clean.py sky130hd gcd
+python3 agenticpd/tools/clean.py --target sky130hd gcd
 ```
 
 ### 清理范围
@@ -657,15 +680,15 @@ python3 agenticpd/clean.py --target sky130hd gcd
 
 ```bash
 # 迭代实验后，清理所有 variant 只保留 base 基线
-python3 agenticpd/clean.py sky130hd gcd --yes
+python3 agenticpd/tools/clean.py sky130hd gcd --yes
 
 # 换设计前，清理旧设计的全部痕迹
-python3 agenticpd/clean.py sky130hd ibex --yes
+python3 agenticpd/tools/clean.py sky130hd ibex --yes
 
 # 批量清理所有开发设计（手动逐个执行，不支持通配符）
-python3 agenticpd/clean.py sky130hd gcd --yes
-python3 agenticpd/clean.py sky130hd aes --yes
-python3 agenticpd/clean.py sky130hd ibex --yes
+python3 agenticpd/tools/clean.py sky130hd gcd --yes
+python3 agenticpd/tools/clean.py sky130hd aes --yes
+python3 agenticpd/tools/clean.py sky130hd ibex --yes
 ```
 
 > **注意**：清理操作通过 `shutil.rmtree` 直接删除，不可恢复。建议先用 `--dry-run` 预览，再决定是否执行。失败 trial 的 artifact 也会一并清除——如果某次实验的结果需要保留，先备份再清理。
