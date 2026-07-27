@@ -156,6 +156,7 @@ class Optimizer:
             branch_stage=branch_stage,
             config_hash=config_hash,
             env_hash=env_hash,
+            iteration=iteration,
         )
         # Compute param_diff against parent (if available)
         self._current_trial = trial

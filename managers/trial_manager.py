@@ -65,16 +65,20 @@ class TrialManager:
         branch_stage: Optional[str] = None,
         config_hash: Optional[str] = None,
         env_hash: Optional[str] = None,
+        iteration: int = 0,
     ) -> TrialRecord:
         """Create a new trial directory and return an empty TrialRecord.
 
         The trial is immediately persisted (so a crash after flow start
         leaves a running record); update() overwrites it on completion.
+
+        Directory naming: iter-{iteration}-{trial_id} — human-readable
+        iteration number prefix + unique 8-char hex ID.
         """
         # Generate trial_id first so artifact_dir can reference it
         from schemas.trial import _new_trial_id
         trial_id = _new_trial_id()
-        artifact_dir = str(self.runs_dir / trial_id)
+        artifact_dir = str(self.runs_dir / f"iter-{iteration}-{trial_id}")
         trial = TrialRecord(
             trial_id=trial_id,
             experiment_id=experiment_id,
@@ -147,7 +151,7 @@ class TrialManager:
 
     def _write_trial(self, trial: TrialRecord) -> None:
         """Atomically write trial.json for a single trial."""
-        trial_dir = self._trial_dir(trial.trial_id)
+        trial_dir = Path(trial.artifact_dir) if trial.artifact_dir else self._trial_dir(trial.trial_id)
         trial_dir.mkdir(parents=True, exist_ok=True)
         trial_path = trial_dir / "trial.json"
         tmp = trial_path.with_suffix(trial_path.suffix + ".tmp")
