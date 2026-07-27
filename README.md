@@ -10,11 +10,11 @@ ORFS 兼容的任意工艺/设计组合。
 E(n) + 阶段瓶颈 B(s)）→ **逐阶段流水线**（StageAgent 调 LLM 生成参数 → make 单阶段
 → 获取真实中间 QoR → 传给下一个 StageAgent）→ **自动树可视化** → **一键清理**。
 
-## AgenticPD 核心机制形式化整理
+## 1. AgenticPD 核心机制形式化整理
 
-### 1. 物理设计流程的形式化
+### 1.1 物理设计流程的形式化
 
-#### 1.1 阶段与动作空间
+#### 1.1.1 阶段与动作空间
 设物理设计流程为有序阶段序列：
 
 $$
@@ -35,7 +35,7 @@ $$
 
 其中 $a_s \in \Theta_s$ 表示在阶段 $s$ 选取的具体参数值。
 
-#### 1.2 分支与前后继关系
+#### 1.1.2 分支与前后继关系
 由于阶段顺序固定，任意选定阶段 $b \in \mathcal{S}$ 可将流程划分为：
 
 - **前置阶段**：$\mathrm{Bef}(b) = \{s \in \mathcal{S} \mid s \text{ 在 } b \text{ 之前}\}$
@@ -43,7 +43,7 @@ $$
 
 **示例**：若 $b = \text{CTS}$，则 $\mathrm{Bef(CTS)} = \{\text{FP},\text{PL}\}$，$\mathrm{Aft(CTS)} = \{\text{RT}\}$。
 
-#### 1.3 QoR 度量
+#### 1.1.3 QoR 度量
 执行完整流程 $\mathbf{a}$ 后，获得后布线（post‑route）签核指标元组：
 
 $$
@@ -52,7 +52,7 @@ $$
 
 其中 WNS（最差负时序裕量）和 TNS（总负时序裕量）为时序指标（越高越好），面积和功耗越低越好。所有优化反馈均基于该真实后布线结果，**不使用任何中间阶段代理指标**。
 
-### 2. 优化目标与迭代过程
+### 1.2 优化目标与迭代过程
 
 给定迭代预算 $N$，优化器依次产生 $N$ 个完整流程动作 $\mathbf{a}_1, \mathbf{a}_2, \ldots, \mathbf{a}_N$，目标是最大化最优后布线 QoR（时序优先）：
 
@@ -62,9 +62,9 @@ $$
 
 最终报告结果为历史最优候选 $\mathbf{a}^* = \arg\max_k Q(\mathbf{a}_k)$，其 QoR 已在迭代中测得，无需额外评估。
 
-### 3. 优化树与分支机制
+### 1.3 优化树与分支机制
 
-#### 3.1 树结构定义
+#### 1.3.1 树结构定义
 所有历史执行结果组织为一棵有根树 $\mathcal{T}$。根节点 $n_0$ 代表综合后的网表（PD 输入）。每次执行阶段 $s$ 时，创建一个节点：
 
 $$
@@ -74,7 +74,7 @@ $$
 其中 $a_k(s)$ 是该阶段采取的动作，$Q_k(s)$ 是该阶段执行后观测到的阶段性 QoR。  
 从根到叶的每条完整路径（依次经过 FP、PL、CTS、RT）对应一个完整的动作元组 $\mathbf{a}_k$。
 
-#### 3.2 分支操作
+#### 1.3.2 分支操作
 在迭代 $k$ 中，优化器选择一个已存在的中间节点 $\hat{n}$（位于某个阶段 $b \in \mathcal{S}$），从该节点出发启动新分支。则新分支：
 
 - **复用** $\mathrm{Bef}(b)$ 阶段的所有结果（即继承祖先路径上的动作与 QoR），**成本为零**；
@@ -90,7 +90,7 @@ $$
 
 > **说明**：分支机制避免了每次迭代都重复运行所有阶段，能将宝贵预算集中在有提升空间的后期阶段，实现"增量式"优化。
 
-### 4. 法官智能体（Judge Agent）
+### 1.4 法官智能体（Judge Agent）
 
 法官智能体由通用 LLM 引擎 $\mathcal{L}$、Prompt $\mathcal{P}_J$ 和Harness Skills $\mathcal{U}_J$ 构成：
 
@@ -98,7 +98,7 @@ $$
 \text{Judge} = (\mathcal{L},\ \mathcal{P}_J,\ \mathcal{U}_J)
 $$
 
-#### 4.1 输入：优化历史
+#### 1.4.1 输入：优化历史
 在迭代 $k$ 开始时，Harness向法官提供历史记录 $\mathcal{H}_k$：
 
 $$
@@ -107,7 +107,7 @@ $$
 
 每个历史条目包含：第 $i$ 次迭代的分支起始节点 $\hat{n}_i$、分支阶段 $b_i$，以及该分支执行后各阶段（从 $b_i$ 到 RT）的 QoR。
 
-#### 4.2 观测工具（Observation Tool）
+#### 1.4.2 观测工具（Observation Tool）
 Harness $\mathcal{U}_J$ 内置的观测工具根据 $\mathcal{H}_k$ 和当前树 $\mathcal{T}_k$，计算自适应概要 $\mathcal{A}_k$，包含两个关键信号：
 
 - **探索平衡度** $E(n)$：每个节点 $n$ 被选为分支起点的次数，用于识别过探索/欠探索区域。
@@ -115,7 +115,7 @@ Harness $\mathcal{U}_J$ 内置的观测工具根据 $\mathcal{H}_k$ 和当前树
 
 观测工具将这两个信号连同树结构快照组装成搜索状态概要(search state profile)，作为法官的观测输入（而非原始历史转储，以控制 token 开销）。
 
-#### 4.3 决策输出
+#### 1.4.3 决策输出
 基于概要，法官产生决策：
 
 $$
@@ -127,7 +127,7 @@ $$
 - 为每个将要执行的下游阶段提供一条文本提示（hint），指导该阶段智能体如何调整参数。
 
 
-### 5. 阶段智能体（Stage Agent）
+### 1.5 阶段智能体（Stage Agent）
 
 每个阶段 $s$ 拥有一个专属的阶段智能体：
 
@@ -137,7 +137,7 @@ $$
 
 其中 $\mathcal{P}_s$ 是该阶段的系统提示（描述职责、参数范围、优化目标等），$\mathcal{U}_s$ 是该阶段的 **PD 技能**，负责与后端工具交互（执行阶段、返回 QoR）。
 
-#### 5.1 执行上下文
+#### 1.5.1 执行上下文
 在法官选定分支 $b_k$ 后，依次执行 $s \in \{b_k\} \cup \mathrm{Aft}(b_k)$。对于每个阶段 $s$，Harness为它构建上下文：
 
 $$
@@ -148,7 +148,7 @@ $$
 - $e_s$：该阶段跨迭代的历史经验（如之前尝试过的参数及结果）；
 - $\text{hint}_s$：法官专门给该阶段的提示。
 
-#### 5.2 动作生成与执行
+#### 1.5.2 动作生成与执行
 阶段智能体根据 $\text{ctx}_s$ 推理，输出一个具体动作 $a_k(s) \in \Theta_s$。然后Harness调用其 PD 技能执行该阶段：
 
 $$
@@ -161,7 +161,7 @@ $$
 
 
 
-### 6. 整体优化循环（伪代码）
+### 1.6 整体优化循环（伪代码）
 
 ```
 输入：设计 D，迭代预算 N，初始动作 a0
@@ -184,7 +184,7 @@ $$
 15. 返回 (a*, Q*)
 ```
 
-### 7. 关键设计要点总结
+### 1.7 关键设计要点总结
 
 | 组件 | 功能 | 输入 | 输出 |
 |------|------|------|------|
@@ -196,9 +196,9 @@ $$
 
 ---
 
-## 目录结构
+## 2. 目录结构
 
-### 根目录 — 入口与规范
+### 2.1 根目录 — 入口与规范
 
 | 文件 | 职责 |
 |------|------|
@@ -213,7 +213,7 @@ $$
 | `environment_manifest.json` | 环境版本快照（OpenROAD 版本、Python 版本等） |
 | `trial.schema.json` | TrialRecord 的 JSON Schema 定义（draft 2020-12） |
 
-### 核心模块（根目录 `.py`）
+### 2.2 核心模块（根目录 `.py`）
 
 | 文件 | 行数 | 职责 |
 |------|------|------|
@@ -225,7 +225,7 @@ $$
 | `utils.py` | 396 | **工具集**。`QoR` 数据类（从 6_report.json / rpt 解析）、`qor_is_better()` 时序优先比较器、原子 JSON 写入、日志配置 |
 | `optimization_tree.py` | 266 | **优化树 T**。有根树数据结构：节点增删查、E(n) 分支计数、Bef 阶段参数/QoR 继承、JSON 序列化/反序列化 |
 
-### orfs/ — ORFS 适配层（阶段 C 拆分）
+### 2.3 orfs/ — ORFS 适配层（阶段 C 拆分）
 
 | 文件 | 行数 | 职责 |
 |------|------|------|
@@ -237,21 +237,21 @@ $$
 | `orfs/__init__.py` | 4 | 包标记 |
 | `orfs_interface.py` | 16 | **向后兼容重导出层**。`from orfs_interface import ORFSRunner, RunResult` 保持旧 import 路径有效 |
 
-### schemas/ — 数据模型（阶段 B）
+### 2.4 schemas/ — 数据模型（阶段 B）
 
 | 文件 | 行数 | 职责 |
 |------|------|------|
 | `schemas/trial.py` | 465 | **四个核心数据类**。`FailureClass`（5 种失败类型枚举）、`StageResult`（单阶段执行记录，elapsed/exit_code/stage_qor/failure）、`CheckpointRef`（可恢复存档点，artifact manifest + SHA-256）、`TrialRecord`（一次完整 RTL→GDS 运行，lineage/QoR/stage_results/checkpoint）。含 JSONL 追加/读取工具 |
 | `schemas/__init__.py` | 13 | 包导出 |
 
-### 管理层（阶段 B）
+### 2.5 管理层（阶段 B）
 
 | 文件 | 行数 | 职责 |
 |------|------|------|
 | `trial_manager.py` | 263 | **Trial 生命周期管理**。`TrialManager`：`create()` 生成 UUID + 写入 `runs/<id>/trial.json`；`update()` 覆盖 + 追加 `trials.jsonl` 索引；`get/list_all/list_by_status/latest` 查询。原子写入（.tmp → os.replace） |
 | `checkpoint_manager.py` | 392 | **Checkpoint 生命周期管理**。`CheckpointManager`：`create()` 扫描 ORFS 产物 + SHA-256 哈希 → `CheckpointRef`；`verify()` 完整性校验；`is_compatible()` 基于 `ParameterSpec.affects` 的阶段感知兼容性判断；`param_hash()` 确定性参数哈希 |
 
-### tools/ — CLI 工具
+### 2.6 tools/ — CLI 工具
 
 | 文件 | 行数 | 职责 |
 |------|------|------|
@@ -259,20 +259,20 @@ $$
 | `tools/visualize.py` | 384 | **优化树可视化**。从 `tree.json` + `history.json` 生成 PNG（5 层布局，绿色基线路径 + 红色最佳路径） |
 | `tools/trial_inspect.py` | 199 | **Trial 查看器**。`--list` / `--latest` / `--failed` / `<trial_id>` `--stages`。支持 JSONL 索引和 `*/trial.json` 扫描两种模式 |
 
-### configs/ — 实验配置
+### 2.7 configs/ — 实验配置
 
 | 文件 | 职责 |
 |------|------|
 | `configs/experiments/smoke.yaml` | 阶段 A smoke test 完整声明（设计层次、环境版本、预算/seed、参数空间 v1、evaluator v1、验收条件）。每次新实验复制此文件为 `<日期>-<设计>-<方法>.yaml` |
 
-### docs/ — 设计文档（中文）
+### 2.8 docs/ — 设计文档（中文）
 
 | 文件 | 职责 |
 |------|------|
 | `docs/experiment-contract.md` | 实验契约：QoR 数据来源、评价函数（时序优先比较器）、Trial 记录格式、预算定义、实验公平性约束 |
 | `docs/问题.txt` | 开发过程中的未解决问题与已知限制 |
 
-### tests/ — 测试（纯 Python，无 EDA/LLM/网络依赖）
+### 2.9 tests/ — 测试（纯 Python，无 EDA/LLM/网络依赖）
 
 | 文件 | 行数 | 用例 | 覆盖内容 |
 |------|------|------|---------|
@@ -282,20 +282,20 @@ $$
 | `tests/fixtures/legacy_run/` | — | — | 阶段 A gcd smoke test 只读回归证据（6_report.json/rpt/log + expected_qor.json） |
 | `tests/fixtures/stage_b/` | — | — | 阶段 B 真实 fixture（ok_trial.json / ok_checkpoint.json / failed_trial.json） |
 
-### scripts/ — 辅助脚本
+### 2.10 scripts/ — 辅助脚本
 
 | 文件 | 职责 |
 |------|------|
 | `scripts/build_fixtures.py` | 从 ORFS 运行产物构建 test fixture（TrialRecord + CheckpointRef），一次性使用 |
 
-### 其他目录
+### 2.11 其他目录
 
 | 目录 | 职责 |
 |------|------|
 | `attachments/` | 文档用图片（架构图、优化树截图） |
 | `runs/` | 运行产物（不进 git）。每个 `main.py` 调用创建一个 `<时间戳>/` 会话目录，内含 `trials.jsonl`（索引）、`<trial_id>/trial.json`（TrialRecord）、`agenticpd.log`、`history.json`、`tree.json`。`clean.py` 可一键清理 |
 
-## 环境准备
+## 3. 环境准备
 
 1. **前提**：WSL Ubuntu，Python >= 3.10，ORFS 已可正常运行
    （`cd flow && make DESIGN_CONFIG=./designs/sky130hd/gcd/config.mk` 能跑通）。
@@ -315,7 +315,7 @@ $$
    export DEEPSEEK_API_KEY=sk-...
    ```
 
-## 运行
+## 4. 运行
 
 所有命令在 `flow/` 目录下执行：
 
@@ -358,16 +358,16 @@ python3 agenticpd/tools/visualize.py agenticpd/runs/<session>
 常用选项：`--design`、`--platform`、`--timeout`（秒）、`--wns-tol`/`--tns-tol`（ps）、
 `--log-level DEBUG`（完整 prompt 输出到 agenticpd.log）。
 
-## 输出位置
+## 5. 输出位置
 
-### ORFS 产物（`flow/` 下）
+### 5.1 ORFS 产物（`flow/` 下）
 
 | 内容 | 路径 | 说明 |
 |---|---|---|
 | 最佳产物 | `results/<plat>/<design>/agenticpd_best/` | 最终 GDS/DEF/网表 + 报告 + `agenticpd_summary.json` |
 | 每轮迭代产物 | `{results,logs,reports,objects}/<plat>/<design>/agenticpd_iter<N>/` | FLOW_VARIANT 隔离，`base` 永不触碰 |
 
-### 会话目录（`agenticpd/runs/<YYYYMMDD_HHMMSS>/`）
+### 5.2 会话目录（`agenticpd/runs/<YYYYMMDD_HHMMSS>/`）
 
 每次 `main.py` 调用创建一个独立会话目录：
 
@@ -385,7 +385,7 @@ python3 agenticpd/tools/visualize.py agenticpd/runs/<session>
 
 > **查看 trial**：`python3 tools/trial_inspect.py --list --runs-dir runs/<session>`
 
-## 日志格式
+## 6. 日志格式
 
 控制台日志使用紧凑的 `#N [AGENT] ...` 格式（无时间戳），httpx/openai 的 HTTP 请求日志已抑制：
 
@@ -416,7 +416,7 @@ python3 agenticpd/tools/visualize.py agenticpd/runs/<session>
 
 日志文件 `agenticpd.log` 格式与控制台一致（无时间戳）。
 
-## 参数空间
+## 7. 参数空间
 
 定义于 `config.py::PARAM_SPACE`。换设计/工艺时需重新审视各参数范围。
 
@@ -444,9 +444,9 @@ python3 agenticpd/tools/visualize.py agenticpd/runs/<session>
 
 ---
 
-## 核心数据结构
+## 8. 核心数据结构
 
-### 优化树 T — `optimization_tree.py`（论文 §3）
+### 8.1 优化树 T — `optimization_tree.py`（论文 §3）
 
 `OptimizationTree` 管理一棵有根树。根节点 `node_id="root"`（stage="root"）代表综合网表。
 每次成功迭代在树中挂载一条阶段节点链（FP→PL→CTS→RT），节点 `node_id` 格式为
@@ -475,7 +475,7 @@ python3 agenticpd/tools/visualize.py agenticpd/runs/<session>
 - `increment_branch_count(node_id)` — E(n) += 1
 - `to_dict()` / `from_dict()` — JSON 序列化
 
-### 历史记录 H — `optimizer.py` 维护
+### 8.2 历史记录 H — `optimizer.py` 维护
 
 与树并行的平面日志 `List[Dict]`，每条记录结构（构造于 `Optimizer._record()`）：
 
@@ -518,9 +518,9 @@ tree.json 与 history.json 每轮结束后由 `Optimizer._persist()` 同时原�
 
 ---
 
-## 数据流详解：每轮迭代中各智能体的信息载体
+## 9. 数据流详解：每轮迭代中各智能体的信息载体
 
-### 0. Observation Tool（论文 §4.2）— `agents.py`
+### 9.1 Observation Tool（论文 §4.2）— `agents.py`
 
 **不调 LLM，纯计算。**
 
@@ -534,7 +534,7 @@ tree.json 与 history.json 每轮结束后由 `Optimizer._persist()` 同时原�
 
 可验证：`--log-level DEBUG` 后查看 agenticpd.log 中 user prompt 首段。
 
-### 1. Judge 的输入与输出（论文 §4）— `agents.py::JudgeAgent`
+### 9.2 Judge 的输入与输出（论文 §4）— `agents.py::JudgeAgent`
 
 **system prompt**（`JudgeAgent.system_prompt()`，每轮相同）：
 角色定义 + QoR 优先级/容差 + 四个阶段参数说明表（从 `config.PARAM_SPACE` 渲染）+
@@ -570,7 +570,7 @@ tree.json 与 history.json 每轮结束后由 `Optimizer._persist()` 同时原�
 - 输出校验与兜底 `agents.py::JudgeAgent.validate()` / `act()`
 - 一致性修正 / ROOT 回退 `optimizer.py::Optimizer.run_iteration()` 步骤 5-6
 
-### 2. StageAgent 的输入与输出（论文 §5）— `agents.py::StageAgent`
+### 9.3 StageAgent 的输入与输出（论文 §5）— `agents.py::StageAgent`
 
 **只有 s ∈ {b} ∪ Aft(b) 的智能体被调用**——Bef 阶段参数从树祖先继承，对应论文 §3.2
 的"零成本复用"。
@@ -608,7 +608,7 @@ tree.json 与 history.json 每轮结束后由 `Optimizer._persist()` 同时原�
 - prompt 渲染 `agents.py::StageAgent.build_user_prompt()`
 - 输出清洗 `agents.py::StageAgent.validate()` / `_fallback_params()`
 
-### 3. 信息流总览（一轮迭代，与论文 §6 伪代码逐行对照）
+### 9.4 信息流总览（一轮迭代，与论文 §6 伪代码逐行对照）
 
 ```
 tree.json + history.json（Optimizer 维护，每轮结束原子落盘）
@@ -641,7 +641,7 @@ tree.json + history.json（Optimizer 维护，每轮结束原子落盘）
         + qor_is_better 判断 → 更新 best_idx → _persist() 原子落盘
 ```
 
-## 分支执行实现细节 — `orfs/`
+## 10. 分支执行实现细节 — `orfs/`
 
 逐阶段流水线的执行方式：
 
@@ -662,7 +662,7 @@ tree.json + history.json（Optimizer 维护，每轮结束原子落盘）
 
 ---
 
-## 配置说明 — `config.py`
+## 11. 配置说明 — `config.py`
 
 `FrameworkConfig`（dataclass）是框架唯一配置入口，关键字段：
 
@@ -694,7 +694,7 @@ CLI 参数（`--iterations`、`--design`、`--platform`、`--timeout`、`--wns-t
 
 ---
 
-## QoR 比较器 — `utils.py::qor_is_better()`
+## 12. QoR 比较器 — `utils.py::qor_is_better()`
 
 论文 §6 第 13 行的"候选优于历史最优"判断。双方均需完整 QoR（失败/不完整恒输）：
 
@@ -704,7 +704,7 @@ CLI 参数（`--iterations`、`--design`、`--platform`、`--timeout`、`--wns-t
 
 ---
 
-## 树可视化 — `tools/visualize.py`
+## 13. 树可视化 — `tools/visualize.py`
 
 `main.py` 运行结束后自动调用，在会话目录下生成 `optimization_tree.png`。
 
@@ -722,11 +722,11 @@ CLI 参数（`--iterations`、`--design`、`--platform`、`--timeout`、`--wns-t
 python3 agenticpd/tools/visualize.py <runs_session_dir>
 ```
 
-## 产物清理 — `clean.py`
+## 14. 产物清理 — `clean.py`
 
 删除指定 platform/design 的所有 AgenticPD 产物。`base` 基线**严格保护，永不删除**。
 
-### 基本用法
+### 14.1 基本用法
 
 ```bash
 # ---- 预览（不删文件，先看清理范围）----
@@ -743,7 +743,7 @@ python3 agenticpd/tools/clean.py sky130hd gcd
 python3 agenticpd/tools/clean.py --target sky130hd gcd
 ```
 
-### 清理范围
+### 14.2 清理范围
 
 删除两类目录：
 
@@ -757,7 +757,7 @@ python3 agenticpd/tools/clean.py --target sky130hd gcd
 - 其他 platform/design 的产物（需要单独指定）
 - `agenticpd/runs/` 中不匹配该设计的目录
 
-### 常见场景
+### 14.3 常见场景
 
 ```bash
 # 迭代实验后，清理所有 variant 只保留 base 基线
@@ -776,7 +776,7 @@ python3 agenticpd/tools/clean.py sky130hd ibex --yes
 
 ---
 
-## 故障兜底矩阵
+## 15. 故障兜底矩阵
 
 | 故障 | 行为 |
 |---|---|
@@ -791,9 +791,9 @@ python3 agenticpd/tools/clean.py sky130hd ibex --yes
 
 ---
 
-## 已知问题
+## 16. 已知问题
 
-### 1. WSL pyc 缓存同步延迟
+### 16.1 WSL pyc 缓存同步延迟
 
 Windows 通过 `\\wsl.localhost` UNC 路径 Edit `.py` 文件后，WSL 侧已有 `.pyc`
 mtime 可能比新 `.py` 更新（9p 同步延迟），Python 会加载旧 bytecode。
@@ -803,19 +803,19 @@ cd ~/OpenROAD-flow-scripts/flow/agenticpd
 find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null
 ```
 
-### 2. finish__design__instance__area 重复键
+### 16.2 finish__design__instance__area 重复键
 
 `logs/.../6_report.json` 中 `finish__design__instance__area` 出现两次，
 后者是 stdcell-only 面积（正确值）。依赖 CPython `json.load` 后键覆盖取后者。
 见 `utils.py::QoR.from_report_json()`。
 
-### 3. 已解决：history.json 与 trial.json 双写
+### 16.3 已解决：history.json 与 trial.json 双写
 
 阶段 C 已消除双写：`optimizer.py._persist()` 不再写入 `history.json`。
 可视化从 `trials.jsonl` 读取（自动检测格式，兼容旧 `history.json`）。
 `--resume` 从 `trials.jsonl` 重建内存历史。
 
-### 3. per-stage elapsed_s 仅迭代模式有效
+### 16.4 per-stage elapsed_s 仅迭代模式有效
 
 `--baseline-only` 使用 `make all` 全流程运行，不拆分单阶段，因此 baseline
 trial 的 `stage_results[*].elapsed_s` 为 0。只有 `--iterations N` 的逐阶段
