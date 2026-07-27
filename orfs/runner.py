@@ -98,22 +98,25 @@ def execute_stage(
     stage_params: Dict[str, Dict[str, Any]],
     variant: str,
     iteration: int,
-) -> Tuple[bool, Optional[Dict[str, float]]]:
-    """Execute a single ORFS stage.
+) -> "StageResult":
+    """Execute a single ORFS stage and return a StageResult.
 
     1. ``make clean_<stage>`` to reset this stage's artifacts
     2. ``make <stage>`` with the stage's parameters
     3. Parse and return intermediate QoR
 
-    Returns:
-        (ok, stage_qor): ok=True if the stage completed without error;
-        stage_qor is a flat metric dict (e.g. {"3_5_place_dp_ws_ps": -1300}).
+    Returns a StageResult with elapsed_s, exit_code, and stage_qor.
+    Failed stages correctly record their elapsed time (never 0.0).
     """
+    from schemas.trial import StageResult, FailureClass
+
     clean_target = CLEAN_TARGETS.get(stage)
     make_target = STAGE_MAKE_TARGET.get(stage)
     if not clean_target or not make_target:
         log.error("[ORFS] Unknown stage '%s'", stage)
-        return False, None
+        return StageResult(stage=stage, status="failed", elapsed_s=0.0,
+                          failure=FailureClass.TOOL_CRASH,
+                          error_message=f"Unknown stage: {stage}")
 
     # 1) Clean this stage
     run_clean_make(cfg, variant, clean_target)
@@ -122,16 +125,27 @@ def execute_stage(
     cmd, log_path = build_make_cmd(
         cfg, stage_params, variant, iteration, target=make_target,
     )
+    log_path_str = str(log_path)
 
     log.info("#%d [ORFS] make %s...", iteration, make_target)
     start = time.monotonic()
     returncode, timed_out = run_make(cfg, cmd, log_path)
     elapsed = time.monotonic() - start
 
-    if timed_out or returncode != 0:
+    if timed_out:
+        log.error("#%d [ORFS] %s timeout (%.1fs)", iteration, stage, elapsed)
+        return StageResult(stage=stage, status="failed", elapsed_s=elapsed,
+                          exit_code=-1, log_path=log_path_str,
+                          failure=FailureClass.TIMEOUT,
+                          error_message=f"Stage timeout after {elapsed:.1f}s")
+
+    if returncode != 0:
         log.error("#%d [ORFS] %s failed (exit=%d, elapsed=%.1fs)",
                   iteration, stage, returncode, elapsed)
-        return False, None
+        return StageResult(stage=stage, status="failed", elapsed_s=elapsed,
+                          exit_code=returncode, log_path=log_path_str,
+                          failure=FailureClass.from_exit_code(returncode),
+                          error_message=f"make exit code {returncode}")
 
     # 3) Parse stage QoR
     stage_qor_raw = parse_stage_qor(cfg, variant)
@@ -140,7 +154,9 @@ def execute_stage(
     if stage_qor:
         log.info("#%d [ORFS] %s QoR: %s", iteration, stage,
                  ", ".join(f"{k}={v}" for k, v in list(stage_qor.items())[:3]))
-    return True, stage_qor
+    return StageResult(stage=stage, status="ok", elapsed_s=elapsed,
+                      exit_code=0, log_path=log_path_str,
+                      stage_qor=stage_qor)
 
 
 def execute_flow(

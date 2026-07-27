@@ -94,8 +94,13 @@ class ORFSRunner:
 
     def run_stage(self, stage: str,
                   stage_params: Dict[str, Dict[str, Any]],
-                  variant: str, iteration: int) -> Tuple[bool, Optional[Dict[str, float]]]:
-        """Execute a single ORFS stage and return (ok, stage_qor)."""
+                  variant: str, iteration: int) -> "StageResult":
+        """Execute a single ORFS stage and return a StageResult.
+
+        StageResult includes elapsed_s (always >= 0, even on failure),
+        exit_code, and parsed intermediate QoR.  Replaces the old
+        ``(bool, dict)`` tuple return.
+        """
         return execute_stage(self.cfg, stage, stage_params, variant, iteration)
 
     def run_finish(self, stage_params: Dict[str, Dict[str, Any]],
@@ -269,7 +274,9 @@ class MockORFSRunner(ORFSRunner):
     def run_stage(self, stage, stage_params, variant, iteration):
         time.sleep(0.01)
         sq = self._mock_stage_qor(stage_params)
-        return True, sq.get(stage, {})
+        from schemas.trial import StageResult
+        return StageResult(stage=stage, status="ok", elapsed_s=0.02,
+                          exit_code=0, stage_qor=sq.get(stage, {}))
 
     def run_finish(self, stage_params, variant, iteration):
         sq = self._mock_stage_qor(stage_params)
