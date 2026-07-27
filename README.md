@@ -355,4 +355,5 @@ trial 的 `stage_results[*].elapsed_s` 为 0。只有 `--iterations N` 的逐阶
 | [docs/directory-guide.md](docs/directory-guide.md) | 每个文件/目录的详细职责、行数、依赖关系 |
 | [docs/data-flow.md](docs/data-flow.md) | 核心数据结构（树/历史）、每轮迭代信息流、分支执行细节 |
 | [docs/experiment-contract.md](docs/experiment-contract.md) | 实验契约：QoR 来源、评价函数、公平性约束 |
+| [docs/cli-verification.md](docs/cli-verification.md) | CLI 验证指南：19 条命令覆盖全部功能，一键验证 |
 
