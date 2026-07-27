@@ -29,7 +29,7 @@ from typing import List, Tuple
 
 # When running from tools/ subdirectory, add project root to sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from config import FLOW_DIR, RUNS_DIR, ORFS_CATEGORIES
+from config import FLOW_DIR, RUNS_DIR, ORFS_CATEGORIES, get_design_runs_dir
 
 # Protected variant — NEVER deleted
 PROTECTED_VARIANT = "base"
@@ -45,27 +45,16 @@ def _variant_dirs(platform: str, design: str, category: str) -> Path:
 
 
 def _find_matching_runs(platform: str, design: str) -> List[Path]:
-    """Scan agenticpd/runs/ for directories matching (platform, design).
+    """Return the per-design runs directory if it exists.
 
-    Matches against config_snapshot.json in each run dir.
-    Skips directories without a snapshot (empty or legacy format).
+    With the runs/<platform>_<design>/ layout, all sessions for a given
+    design live under one directory — no need to scan config_snapshot.json.
     """
-    if not RUNS_DIR.is_dir():
-        return []
-    matched: List[Path] = []
-    for run_dir in sorted(RUNS_DIR.iterdir()):
-        if not run_dir.is_dir():
-            continue
-        snapshot = run_dir / "config_snapshot.json"
-        if not snapshot.is_file():
-            continue
-        try:
-            cfg = json.loads(snapshot.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
-        if cfg.get("platform") == platform and cfg.get("design") == design:
-            matched.append(run_dir)
-    return matched
+    d = get_design_runs_dir(platform, design)
+    # Only return if it actually contains something
+    if d.is_dir() and any(d.iterdir()):
+        return [d]
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -91,9 +80,9 @@ def collect_targets(platform: str, design: str) -> List[Tuple[Path, str]]:
                 continue  # base is protected
             targets.append((variant_dir, f"{cat}/{platform}/{design}/{variant_dir.name}"))
 
-    # agenticpd runs
+    # agenticpd runs — entire design subdirectory
     for run_dir in _find_matching_runs(platform, design):
-        targets.append((run_dir, f"agenticpd/runs/{run_dir.name}"))
+        targets.append((run_dir, f"agenticpd/runs/{run_dir.name} (all sessions)"))
 
     return targets
 

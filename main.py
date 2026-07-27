@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Optional
 
 import config
-from config import AGENTICPD_DIR, ENV_FILENAME, RUNS_DIR as CFG_RUNS_DIR, FrameworkConfig
+from config import AGENTICPD_DIR, ENV_FILENAME, RUNS_DIR as CFG_RUNS_DIR, FrameworkConfig, get_design_runs_dir
 from optimizer import Optimizer
 from orfs_interface import MockORFSRunner, ORFSRunner
 from utils import load_dotenv_file, setup_logging
@@ -77,23 +77,28 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def resolve_run_dir(resume: Optional[str]) -> Path:
+def resolve_run_dir(resume: Optional[str], platform: str, design: str) -> Path:
     """Resolve the run working directory.
 
-    Each ``main.py`` invocation gets a timestamped session directory under
-    ``runs/``.  TrialManager creates per-trial subdirectories within it.
+    Session directories are organised as::
+
+        runs/<platform>_<design>/<YYYYMMDD_HHMMSS>/
+
+    TrialManager creates per-trial subdirectories within the session.
     Multiple invocations never share files.
     """
+    design_dir = get_design_runs_dir(platform, design)
+
     if resume is None:
-        run_dir = CFG_RUNS_DIR / datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_dir = design_dir / datetime.now().strftime("%Y%m%d_%H%M%S")
         run_dir.mkdir(parents=True, exist_ok=True)
         return run_dir
 
     if resume == "latest":
-        candidates = sorted((d for d in CFG_RUNS_DIR.iterdir() if d.is_dir()),
+        candidates = sorted((d for d in design_dir.iterdir() if d.is_dir()),
                             key=lambda d: d.name)
         if not candidates:
-            sys.exit(f"Error: --resume found no historical run directories ({CFG_RUNS_DIR})")
+            sys.exit(f"Error: --resume found no historical run directories ({design_dir})")
         return candidates[-1]
 
     run_dir = Path(resume)
@@ -152,7 +157,11 @@ def main() -> None:
     load_dotenv_file(AGENTICPD_DIR / ENV_FILENAME)
 
     # 2) Working directory & logging
-    run_dir = resolve_run_dir(args.resume)
+    # Resolve platform/design early (before run_dir) so the session
+    # directory can be placed under runs/<platform>_<design>/.
+    _platform = args.platform or FrameworkConfig.platform
+    _design = args.design or FrameworkConfig.design
+    run_dir = resolve_run_dir(args.resume, _platform, _design)
     cfg = build_config(args, run_dir)
     setup_logging(cfg.log_file, level=getattr(logging, args.log_level))
     # Suppress httpx/openai HTTP request logs (too noisy)

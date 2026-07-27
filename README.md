@@ -31,6 +31,8 @@ AgenticPD/
 ├── tests/                    # 56 个纯 Python 测试
 ├── scripts/                  # 辅助脚本
 └── runs/                     # 运行产物（不进 git）
+    └── <platform>_<design>/  # 按平台+设计分组
+        └── <YYYYMMDD_HHMMSS>/# 会话目录
 ```
 
 > 各文件详细职责与行数见 [docs/directory-guide.md](docs/directory-guide.md)。
@@ -69,7 +71,7 @@ python3 agenticpd/main.py --baseline-only --design gcd
 # 完整优化：基线 + N 次迭代
 python3 agenticpd/main.py --design gcd --iterations 3
 
-# 断点续跑（自动取 runs/ 下最新一次会话目录）
+# 断点续跑（自动取 runs/<platform>_<design>/ 下最新一次会话目录）
 python3 agenticpd/main.py --resume latest
 
 # ---- 调试模式（零 token / 零 EDA）----
@@ -106,9 +108,9 @@ python3 agenticpd/tools/visualize.py agenticpd/runs/<session>
 | 最佳产物 | `results/<plat>/<design>/agenticpd_best/` | 最终 GDS/DEF/网表 + 报告 + `agenticpd_summary.json` |
 | 每轮迭代产物 | `{results,logs,reports,objects}/<plat>/<design>/agenticpd_iter<N>/` | FLOW_VARIANT 隔离，`base` 永不触碰 |
 
-### 5.2 会话目录（`agenticpd/runs/<YYYYMMDD_HHMMSS>/`）
+### 5.2 会话目录（`agenticpd/runs/<platform>_<design>/<YYYYMMDD_HHMMSS>/`）
 
-每次 `main.py` 调用创建一个独立会话目录：
+每次 `main.py` 调用在对应设计子目录下创建独立会话：
 
 | 内容 | 路径 | 说明 |
 |---|---|---|
@@ -271,7 +273,7 @@ python3 agenticpd/tools/clean.py --target sky130hd gcd
 | 清理对象 | 路径 | 说明 |
 |---------|------|------|
 | ORFS 产物 variant | `results/` `logs/` `reports/` `objects/{platform}/{design}/` | 该设计下除 `base` 以外的所有 variant（如 `agenticpd_iter*`） |
-| AgenticPD runs | `agenticpd/runs/` | 匹配该 platform + design 的运行目录（通过 `config_snapshot.json` 识别） |
+| AgenticPD runs | `agenticpd/runs/<platform>_<design>/` | 该平台+设计的整个会话子目录 |
 
 **不受影响的内容**：
 - `base` 基线产物（ORFS 默认运行结果），永远不会被删除

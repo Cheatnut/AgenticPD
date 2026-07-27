@@ -172,7 +172,7 @@ class ORFSRunner:
         from managers import CheckpointManager
         cm = CheckpointManager(self.cfg.flow_dir)
         # Try to load checkpoint from the trial's artifact directory
-        trial_dir = self.cfg.run_dir.parent / trial_id if self.cfg.run_dir else None
+        trial_dir = self.cfg.run_dir / trial_id if self.cfg.run_dir else None
         if trial_dir is None or not trial_dir.is_dir():
             log.warning("[ORFS] Cannot verify checkpoint: trial dir not found for %s", trial_id)
             return False

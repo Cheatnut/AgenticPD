@@ -33,6 +33,13 @@ RUNS_DIR_NAME: str = "runs"       # agenticpd/runs/ directory name
 ENV_FILENAME: str = ".env"        # environment variable filename
 RUNS_DIR: Path = AGENTICPD_DIR / RUNS_DIR_NAME  # working directory for all runs
 
+
+def get_design_runs_dir(platform: str, design: str) -> Path:
+    """Return the per-design runs directory: ``runs/<platform>_<design>/``."""
+    d = RUNS_DIR / f"{platform}_{design}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
 # ORFS four artifact directory names (results/logs/reports/objects),
 # consistent with FrameworkConfig path logic
 ORFS_CATEGORIES: List[str] = ["results", "logs", "reports", "objects"]
