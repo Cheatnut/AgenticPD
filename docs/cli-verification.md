@@ -10,30 +10,28 @@
 # 1. 全 mock 优化，3 轮迭代
 python3 ./main.py --mock-llm --mock-orfs --design gcd --iterations 3
 
-# 2. 列出所有会话
-python3 tools/trial_inspect.py --sessions sky130hd gcd
-# 3. 列出会话 001 的全部 trial
-python3 tools/trial_inspect.py --list sky130hd gcd 001
+# 2. 列出最新会话的所有 trial
+python3 tools/trial_inspect.py --list \
+  --runs-dir runs/sky130hd_gcd/$(ls -t runs/sky130hd_gcd/ | head -1)
 
-# 4. 查看某个 trial（按 ID 全局搜索）
-python3 tools/trial_inspect.py <trial-id>
-# 5. 同上 + per-stage 明细
-python3 tools/trial_inspect.py <trial-id> --stages
+# 3. 查看某个 trial 的完整细节（含 per-stage）
+python3 tools/trial_inspect.py <trial-id> --stages \
+  --runs-dir runs/sky130hd_gcd/$(ls -t runs/sky130hd_gcd/ | head -1)
 
-# 6. 预览清理范围（--dry-run，不删任何东西）
+# 4. 预览清理范围（--dry-run，不删任何东西）
 python3 tools/clean.py sky130hd gcd --dry-run
 
-# 7. 生成优化树可视化 PNG
+# 5. 生成优化树可视化 PNG
 python3 tools/visualize.py runs/sky130hd_gcd/$(ls -t runs/sky130hd_gcd/ | head -1)
 
-# 8. 再跑一次——验证基线缓存命中
+# 6. 再跑一次——验证基线缓存命中
 python3 ./main.py --mock-llm --mock-orfs --design gcd --iterations 2
 
-# 9. 列出可复现的 trial
+# 7. 列出可复现的 trial
 python3 tools/trial_reproduce.py \
   --runs-dir runs/sky130hd_gcd/$(ls -t runs/sky130hd_gcd/ | head -1) --list
 
-# 10. 清理（删除 runs/sky130hd_gcd/ 和 ORFS variant 产物）
+# 8. 清理（删除 runs/sky130hd_gcd/ 和 ORFS variant 产物）
 python3 tools/clean.py sky130hd gcd --yes
 ```
 
@@ -56,18 +54,17 @@ python3 tools/clean.py sky130hd gcd --yes
 
 | # | 命令 | 功能 | 预期现象 |
 |---|------|------|---------|
-| 7 | `--sessions <platform> <design>` | 列出该设计的所有会话 | 编号 + 每个会话的 trial 数量。 |
-| 8 | `--list <platform> <design> [seq]` | 列出某次会话的全部 trial | 表格：Trial ID / Status / QoR / Elapsed。省略 seq 取最新会话。 |
-| 9 | `<trial_id>` | 按 ID 全局搜索 trial | 显示 parent / param_diff / elapsed / QoR。不需要指定会话。 |
-| 10 | `<trial_id> --stages` | 加 per-stage 明细 | 以上内容 + 每个阶段的 status / 耗时 / 中间时序值。 |
-| 11 | `--latest <platform> <design>` | 最新会话的最新 trial | 自动定位。 |
+| 7 | `--list --runs-dir <会话目录>` | 列出某次会话的全部 trial | 表格：Trial ID / Status / QoR / Elapsed。旧 trial 显示 `[no params]`。 |
+| 8 | `<trial_id> --runs-dir <会话>` | 查看单个 trial 详情 | 显示 parent lineage / param_diff / elapsed / 各阶段摘要 / QoR。 |
+| 9 | `<trial_id> --stages --runs-dir <会话>` | 加 per-stage 明细 | 以上内容 + 每个阶段的 status / 耗时 / 中间时序值。 |
+| 10 | `--latest --runs-dir <会话>` | 最新 trial | 同上（#8），自动定位到最近一个 trial。 |
+| 11 | `--failed --runs-dir <会话>` | 只看失败的 trial | 只显示 status=failed 的 trial。mock 模式不会产生失败。 |
 
 ### tools/trial_reproduce.py — Trial 复现
 
 | # | 命令 | 功能 | 预期现象 |
 |---|------|------|---------|
-| 12 | `--failed <platform> <design>` | 遍历所有会话的失败 trial | 汇总该设计下所有失败 trial。mock 模式不会产生失败。 |
-| 13 | `--runs-dir <会话> --list` | 列出可复现的 trial | 显示有完整 `params` 的 trial。`[no params]` = 旧 trial，无法复现。 |
+| 12 | `--runs-dir <会话> --list` | 列出可复现的 trial | 显示有完整 `params` 的 trial。`[no params]` = 旧 trial，无法复现。 |
 | 13 | `<trial_id> --runs-dir <会话>` | 用真实 ORFS 复现 | 提取参数 → `run_flow()` → 对比原始/复现 QoR 的 Δ。**⚠ 会真实跑 ORFS，不是 mock。** |
 
 ### tools/clean.py — 产物清理
@@ -105,7 +102,7 @@ runs/
   sky130hd_gcd/
     .baseline/
       trial.json                     ← 共享基线缓存
-    001_20260728_100000/            ← 第一次实验
+    20260727_230000/                 ← 第一次实验
       iter-1-xxxxxxxx/               ← 第一轮优化
         trial.json
       iter-2-yyyyyyyy/
@@ -115,7 +112,7 @@ runs/
       optimization_tree.png
       agenticpd.log
       config_snapshot.json
-    002_20260728_101500/            ← 第二次实验（基线缓存命中）
+    20260727_231500/                 ← 第二次实验（基线缓存命中）
       iter-1-zzzzzzzz/               ← 从 iter-1 开始（无 iter-0）
         trial.json
       ...

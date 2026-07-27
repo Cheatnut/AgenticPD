@@ -12,7 +12,6 @@ Usage:
 """
 
 import argparse
-import re
 import json
 import sys
 from pathlib import Path
@@ -29,12 +28,6 @@ from managers import TrialManager
 # Session helpers
 # ---------------------------------------------------------------------------
 
-def _session_sort_key(p: Path):
-    """Sort sessions by numeric prefix (001_, 002_, …); fallback to name."""
-    m = re.match(r"^(\d+)_", p.name)
-    return (int(m.group(1)), p.name) if m else (10**9, p.name)
-
-
 def _list_sessions(platform: str, design: str) -> List[Path]:
     """Return sorted list of session directories for a design."""
     d = get_design_runs_dir(platform, design)
@@ -42,7 +35,7 @@ def _list_sessions(platform: str, design: str) -> List[Path]:
         return []
     return sorted(
         (p for p in d.iterdir() if p.is_dir() and not p.name.startswith(".")),
-        key=_session_sort_key,
+        key=lambda p: p.name,
     )
 
 
