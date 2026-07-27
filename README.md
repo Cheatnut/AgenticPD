@@ -25,7 +25,7 @@ AgenticPD/
 ├── managers/                 # 管理层：TrialManager + CheckpointManager
 ├── orfs/                     # ORFS 适配层（命令构建/解析/执行/后端）
 ├── schemas/                  # 数据模型（TrialRecord / StageResult / CheckpointRef）
-├── tools/                    # CLI 工具（trial_inspect / visualize / clean）
+├── tools/                    # CLI 工具（trial_inspect / trial_reproduce / visualize / clean）
 ├── configs/experiments/      # 实验配置（smoke.yaml）
 ├── docs/                     # 设计文档
 ├── tests/                    # 56 个纯 Python 测试

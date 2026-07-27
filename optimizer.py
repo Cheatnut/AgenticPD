@@ -172,6 +172,9 @@ class Optimizer:
             t.failure = failure
         if error_message:
             t.error_message = error_message
+        # Store full params for reproducibility (even without tree.json)
+        if current_params:
+            t.params = current_params
         # Compute param_diff: only if there is a parent trial AND params actually changed.
         # Load parent's full params from its TrialRecord, not just inherited Bef-stage params.
         parent_params = None
