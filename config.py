@@ -253,10 +253,10 @@ class FrameworkConfig:
     LLM settings, QoR comparison tolerances, etc."""
 
     # ---- Target design (overridable via CLI; note PARAM_SPACE is tuned for
-    #      sky130hd/gcd — when changing design/PDK, re-evaluate the parameter
+    #      sky130hd/gcd — gcd is the smoke design; re-evaluate parameter
     #      space and fastroute template) ----
     platform: str = "sky130hd"
-    design: str = "ibex"
+    design: str = "gcd"
 
     # ---- Paths (all derived from FLOW_DIR) ----
     flow_dir: Path = field(default_factory=lambda: FLOW_DIR)

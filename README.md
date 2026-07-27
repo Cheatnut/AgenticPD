@@ -620,17 +620,55 @@ python3 agenticpd/visualize_tree.py runs/20260718_210019
 
 ## 产物清理 — `clean.py`
 
-删除指定 platform/design 的所有 AgenticPD 产物，base 基线严加保护：
+删除指定 platform/design 的所有 AgenticPD 产物。`base` 基线**严格保护，永不删除**。
+
+### 基本用法
 
 ```bash
-python3 agenticpd/clean.py --target nangate45 gcd --dry-run   # 预览
-python3 agenticpd/clean.py --target nangate45 gcd             # 交互确认
-python3 agenticpd/clean.py --target nangate45 gcd --yes       # 跳过确认
-python3 agenticpd/clean.py nangate45 gcd                      # 位置参数等效
+# ---- 预览（不删文件，先看清理范围）----
+python3 agenticpd/clean.py sky130hd gcd --dry-run
+
+# ---- 交互确认后删除 ----
+python3 agenticpd/clean.py sky130hd gcd
+
+# ---- 跳过确认直接删除 ----
+python3 agenticpd/clean.py sky130hd gcd --yes
+
+# 两种写法等效：
+python3 agenticpd/clean.py sky130hd gcd
+python3 agenticpd/clean.py --target sky130hd gcd
 ```
 
-清理范围：`results/` `logs/` `reports/` `objects/`（base 以外的所有 variant）+
-匹配的 `agenticpd/runs/` 目录（通过各 run 的 `config_snapshot.json` 匹配）。
+### 清理范围
+
+删除两类目录：
+
+| 清理对象 | 路径 | 说明 |
+|---------|------|------|
+| ORFS 产物 variant | `results/` `logs/` `reports/` `objects/{platform}/{design}/` | 该设计下除 `base` 以外的所有 variant（如 `agenticpd_iter*`） |
+| AgenticPD runs | `agenticpd/runs/` | 匹配该 platform + design 的运行目录（通过 `config_snapshot.json` 识别） |
+
+**不受影响的内容**：
+- `base` 基线产物（ORFS 默认运行结果），永远不会被删除
+- 其他 platform/design 的产物（需要单独指定）
+- `agenticpd/runs/` 中不匹配该设计的目录
+
+### 常见场景
+
+```bash
+# 迭代实验后，清理所有 variant 只保留 base 基线
+python3 agenticpd/clean.py sky130hd gcd --yes
+
+# 换设计前，清理旧设计的全部痕迹
+python3 agenticpd/clean.py sky130hd ibex --yes
+
+# 批量清理所有开发设计（手动逐个执行，不支持通配符）
+python3 agenticpd/clean.py sky130hd gcd --yes
+python3 agenticpd/clean.py sky130hd aes --yes
+python3 agenticpd/clean.py sky130hd ibex --yes
+```
+
+> **注意**：清理操作通过 `shutil.rmtree` 直接删除，不可恢复。建议先用 `--dry-run` 预览，再决定是否执行。失败 trial 的 artifact 也会一并清除——如果某次实验的结果需要保留，先备份再清理。
 
 ---
 

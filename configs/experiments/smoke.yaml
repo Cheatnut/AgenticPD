@@ -1,0 +1,60 @@
+# AgenticPD 阶段 A：最小 smoke 实验契约
+# 这是声明文件，不由当前 Demo 自动解析；阶段 B 将把它接入配置加载器。
+schema_version: 1
+experiment_id: agenticpd-smoke-sky130hd-gcd-v1
+purpose: "验证 Trial 创建、ORFS 调用和 QoR 解析链路；不用于论文结论"
+
+roles:
+  smoke:
+    platform: sky130hd
+    design: gcd
+  development:
+    - platform: sky130hd
+      design: aes
+    - platform: sky130hd
+      design: ibex
+  held_out:
+    platform: sky130hd
+    design: jpeg
+
+# ---- 设计层次说明 ----
+# smoke:     最小设计（gcd），用于快速验证链路是否通畅；迭代预算小（1-2 轮）
+# development: 中等设计（aes, ibex），用于开发 prompt、调参、阈值和策略
+# held_out:   大设计（jpeg），全程冻结，只在最终实验评价时跑一次
+
+revisions:
+  # 当前 WSL 的 ORFS 工作树不是 Git checkout，无法可靠恢复 commit。
+  # 在学校服务器上运行前必须写入 git rev-parse HEAD 的 40 位 SHA。
+  orfs_commit: unresolved
+  # OpenROAD 二进制应以 openroad -version 或源码 commit 标识，禁止写绝对路径。
+  openroad_revision: unresolved
+  # PDK/Nangate/Sky130 的来源与版本必须可追溯。
+  pdk_revision: unresolved
+
+execution:
+  make_target: all
+  timeout_s: 3600
+  seed: 20260726
+  max_trials: 1
+  max_parallel_trials: 1
+  evaluator: "orfs-final-6_report.json-v1"
+
+search_space:
+  version: param-space-v1
+  source: "agenticpd/config.py:PARAM_SPACE"
+  baseline: "agenticpd/config.py:BASELINE_PARAMS"
+  # 参数范围标注原始参考 sky130hd/gcd 的 AutoTuner JSON (line 99 in config.py)
+  notes: >-
+    PARAM_SPACE 以 sky130hd/gcd AutoTuner 为参考。切换到 development/held-out
+    设计后，部分参数（如 CORE_UTILIZATION、AREA/POWER guardrail）需要按设计规模
+    重新校准，不可直接沿用 gcd 的范围。
+
+acceptance:
+  # smoke 只检查链路，不以 QoR 数值门槛判断算法优劣
+  required_outputs:
+    - "6_report.json"
+    - "6_finish.rpt"
+    - "6_report.log"
+  require_complete_qor: true
+  allow_network: false
+  allow_llm: false
