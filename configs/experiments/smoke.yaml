@@ -1,8 +1,31 @@
-# AgenticPD 阶段 A：最小 smoke 实验契约
-# 这是声明文件，不由当前 Demo 自动解析；阶段 B 将把它接入配置加载器。
+# =============================================================================
+# AgenticPD 实验声明 — 阶段 A smoke test
+# =============================================================================
+#
+# 本文件是一份实验的完整声明。任何一个字段的改动都会改变实验结果，
+# 因此必须版本化管理，不得随意修改已跑过实验的声明文件。
+#
+# 后续每做一次新实验，复制本文件为 <日期>-<设计>-<方法>.yaml，
+# 修改对应字段后运行。旧文件保留不动，作为历史证据。
+# =============================================================================
+
 schema_version: 1
 experiment_id: agenticpd-smoke-sky130hd-gcd-v1
 purpose: "验证 Trial 创建、ORFS 调用和 QoR 解析链路；不用于论文结论"
+created_at: 2026-07-27
+
+# =============================================================================
+# 1. 设计层次与合法范围
+# =============================================================================
+# 本项目目前只使用 sky130hd PDK 下的设计。ORFS 中 sky130hd 的合法设计
+# 列表（ls flow/designs/sky130hd/）：
+#   aes  chameleon  gcd  ibex  jpeg  microwatt  riscv32i
+#
+# 角色定义：
+#   smoke       — 最小设计，每轮改动必须跑通，用于快速回归
+#   development — 开发设计，用于调 prompt / 阈值 / 策略
+#   held_out    — 留出设计，全程冻结，只用于最终评价
+# =============================================================================
 
 roles:
   smoke:
@@ -17,44 +40,176 @@ roles:
     platform: sky130hd
     design: jpeg
 
-# ---- 设计层次说明 ----
-# smoke:     最小设计（gcd），用于快速验证链路是否通畅；迭代预算小（1-2 轮）
-# development: 中等设计（aes, ibex），用于开发 prompt、调参、阈值和策略
-# held_out:   大设计（jpeg），全程冻结，只在最终实验评价时跑一次
+# =============================================================================
+# 2. 环境版本锁定
+# =============================================================================
+# 可复现实验要求每个组件都能追溯到唯一版本。当前 WSL 工作树的限制
+# 如实记录；在学校服务器上正式运行前必须补全。
 
 revisions:
-  # 当前 WSL 的 ORFS 工作树不是 Git checkout，无法可靠恢复 commit。
-  # 在学校服务器上运行前必须写入 git rev-parse HEAD 的 40 位 SHA。
-  orfs_commit: unresolved
-  # OpenROAD 二进制应以 openroad -version 或源码 commit 标识，禁止写绝对路径。
-  openroad_revision: unresolved
-  # PDK/Nangate/Sky130 的来源与版本必须可追溯。
-  pdk_revision: unresolved
+  orfs:
+    commit: unresolved
+    reason: "ORFS 工作树的 .git 已删除，无法获取 commit SHA"
+    action_required: "在学校服务器上从 Git clone 后写入 git rev-parse HEAD"
+    directory: "~/OpenROAD-flow-scripts"
+    install_date: "2025-07-02 (build_openroad.log 时间戳)"
 
-execution:
-  make_target: all
-  timeout_s: 3600
-  seed: 20260726
+  openroad:
+    version: "26Q3-18-g5c5380c49a"
+    binary: "tools/install/OpenROAD/bin/openroad"
+    build: "本地编译（build_openroad.sh），线程数 16"
+
+  pdk:
+    name: sky130hd
+    source: "SkyWater SKY130 公开 PDK，随 ORFS 依赖安装"
+    revision: unresolved
+    action_required: "记录 PDK 安装包的来源与版本号"
+
+  python:
+    version: "3.10.12"
+    executable: python3
+
+  os:
+    name: "Ubuntu (WSL2)"
+    kernel: "Linux x86_64"
+
+# =============================================================================
+# 3. 预算与 seed
+# =============================================================================
+# 预算定义了一次实验允许消耗的最大资源。超出任意一项即视为实验结束。
+#
+# 预算类型：
+#   max_trials        — 最多多少次完整 RTL->GDS 流程（含失败）
+#   max_wallclock_h   — 最大 wall-clock 小时数
+#   max_llm_tokens    — 最大 LLM token 消耗（本次不涉及）
+#   timeout_per_trial — 单个 trial 超时（秒），超时后 kill 进程组
+#
+# seed 用于固定随机数生成器，确保 random search / Agent 行为可复现。
+# 本次 smoke 没有随机性，seed 填入作为字段占位。
+
+budget:
   max_trials: 1
-  max_parallel_trials: 1
-  evaluator: "orfs-final-6_report.json-v1"
+  max_wallclock_h: 2
+  max_llm_tokens: 0            # smoke 不调用 LLM
+  timeout_per_trial_s: 3600
+  seed: 20260727
+
+# =============================================================================
+# 4. 参数空间
+# =============================================================================
+# 第一版参数空间（param-space-v1）：9 个参数，覆盖 FP / PL / CTS / RT
+# 四个阶段。参数定义在 agenticpd/config.py::PARAM_SPACE。
+#
+# 版本升级规则：
+#   - 新增/删除参数 → 升级主版本号（v1 → v2）
+#   - 修改参数范围/默认值 → 升级次版本号（v1.0 → v1.1）
+#   - 参数空间版本号必须写入 trial record
 
 search_space:
   version: param-space-v1
-  source: "agenticpd/config.py:PARAM_SPACE"
-  baseline: "agenticpd/config.py:BASELINE_PARAMS"
-  # 参数范围标注原始参考 sky130hd/gcd 的 AutoTuner JSON (line 99 in config.py)
-  notes: >-
-    PARAM_SPACE 以 sky130hd/gcd AutoTuner 为参考。切换到 development/held-out
-    设计后，部分参数（如 CORE_UTILIZATION、AREA/POWER guardrail）需要按设计规模
-    重新校准，不可直接沿用 gcd 的范围。
+  source_file: "agenticpd/config.py"
+  source_object: "PARAM_SPACE"
+  parameter_count: 9
+  baseline_defaults: "agenticpd/config.py::BASELINE_PARAMS"
+  note: >-
+    参数范围原始参考 sky130hd/gcd 的 AutoTuner JSON
+    (flow/designs/sky130hd/gcd/autotuner.json)。
+    切换到 development/held_out 设计后，CORE_UTILIZATION 等
+    规模敏感参数需要重新校准，不可直接沿用 gcd 的范围。
+
+  # 参数清单（与 config.py 同步，仅作声明；代码以 config.py 为准）
+  parameters:
+    FP:
+      - name: CORE_UTILIZATION
+        type: int
+        range: [20, 50]
+        default: 38
+        description: "核心区利用率（%），越高面积越小但布线越拥挤"
+      - name: CORE_ASPECT_RATIO
+        type: float
+        range: [0.5, 2.0]
+        default: 1.0
+        description: "核心区高宽比"
+    PL:
+      - name: PLACE_DENSITY_LB_ADDON
+        type: float
+        range: [0.0, 0.2]
+        default: null
+        description: "布局密度余量"
+      - name: CELL_PAD_IN_SITES_GLOBAL_PLACEMENT
+        type: int
+        range: [0, 3]
+        default: 0
+        description: "全局布局阶段单元 padding（site 数）"
+    CTS:
+      - name: CTS_CLUSTER_SIZE
+        type: int
+        range: [10, 200]
+        default: null
+        description: "时钟 sink 聚类最大 sink 数"
+      - name: CTS_CLUSTER_DIAMETER
+        type: int
+        range: [20, 400]
+        default: null
+        description: "聚类最大直径（um）"
+      - name: SETUP_SLACK_MARGIN
+        type: float
+        range: [0.0, 0.2]
+        default: 0.0
+        description: "repair_timing setup 裕量（ns），同时影响 FP/CTS/GRT"
+    RT:
+      - name: FASTROUTE_LAYER_ADJUSTMENT
+        type: float
+        range: [0.1, 0.3]
+        default: 0.2
+        description: "布线层容量调整（通过生成 fastroute.tcl 落地）"
+      - name: GRT_CONGESTION_ITERATIONS
+        type: int
+        range: [10, 50]
+        default: 30
+        description: "global routing 拥塞消除迭代次数"
+
+# =============================================================================
+# 5. Evaluator（评价函数）
+# =============================================================================
+# evaluator 是判断 trial 优劣的唯一权威。本文档写死当前使用的 evaluator
+# 版本与规则，确保后续实验比较时不会"无意中改了规则"。
+#
+# 升级规则：
+#   - 修改比较优先级 / 容差 / gate 条件 → 升级版本号
+#   - 新版本 evaluator 跑的实验不能与旧版本直接对比 QoR 排名
+
+evaluator:
+  version: evaluator-v1
+  source_file: "agenticpd/utils.py"
+  source_function: "qor_is_better(new, old, wns_tol_ps, tns_tol_ps)"
+  rule: "timing-first"
+  description: >-
+    时序优先的多层比较器：
+    1. 双方 WNS >= 0（均收敛） → 跳过时序，直接比功耗/面积
+    2. |Delta_WNS| > 10 ps → WNS 大者胜
+    3. |Delta_TNS| > 50 ps → TNS 大者胜
+    4. 功耗小者胜 → 面积小者胜 → 完全打平判不优（保留旧最佳）
+    5. None / incomplete QoR 永远不会赢
+  tolerances:
+    wns_tol_ps: 10.0
+    tns_tol_ps: 50.0
+  qor_source: "6_report.json（JSON 优先）；6_finish.rpt + 6_report.log（fallback）"
+  guardrails:
+    - "DRC 失败 run 不计入 QoR 比较"
+    - "中间 stage 指标只用于决策，最终胜负只看 post-route"
+    - "所有容差在实验开始前固定，不允许看完结果再改"
+
+# =============================================================================
+# 6. 验收条件（smoke test 专用）
+# =============================================================================
 
 acceptance:
-  # smoke 只检查链路，不以 QoR 数值门槛判断算法优劣
   required_outputs:
     - "6_report.json"
     - "6_finish.rpt"
     - "6_report.log"
-  require_complete_qor: true
-  allow_network: false
+  require_complete_qor: true   # WNS / TNS / Area / Power 四项必须齐全
+  allow_network: false          # smoke 不调 LLM，不访问网络
   allow_llm: false
+  make_test_must_pass: true     # make test 21 例必须全过
