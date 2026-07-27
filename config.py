@@ -84,6 +84,15 @@ class ParamSpec:
                          # system prompts)
     kind: str = KIND_MAKE_VAR  # delivery kind, see comments above
 
+    # Stages affected when this parameter changes (in order: FP, PL, CTS, RT).
+    # e.g. ("CTS","RT") = changing this param invalidates CTS+RT checkpoints
+    # but not FP or PL.  Default for FP params is all stages.
+    affects: tuple = ()
+
+    # Stages affected when this parameter changes (FP,PL,CTS,RT order).
+    # e.g. ("CTS","RT") = invalidates CTS+RT checkpoints only.
+    affects: tuple = ()
+
     def cast(self, value: Any) -> float:
         """Coerce raw LLM output to this param's type and clamp to [vmin, vmax]"""
         v = float(value)
@@ -107,6 +116,7 @@ PARAM_SPACE: Dict[str, List[ParamSpec]] = {
                 "but more routing congestion; lower = easier timing/routing but "
                 "larger area. Base design currently uses 38."
             ),
+            affects=('FP', 'PL', 'CTS', 'RT'),
         ),
         ParamSpec(
             name="CORE_ASPECT_RATIO", stage="FP", ptype="float",
@@ -115,6 +125,7 @@ PARAM_SPACE: Dict[str, List[ParamSpec]] = {
                 "Core aspect ratio (height/width, 0.5–2.0). Affects floorplan "
                 "shape and clock/signal wirelength distribution. 1.0 = square."
             ),
+            affects=('FP', 'PL', 'CTS', 'RT'),
         ),
     ],
     "PL": [
@@ -129,6 +140,7 @@ PARAM_SPACE: Dict[str, List[ParamSpec]] = {
                 "Note: baseline does not set this parameter, using the platform's "
                 "fixed density 0.60; once set, it switches to 'lower bound + addon' mode."
             ),
+            affects=('PL', 'CTS', 'RT'),
         ),
         ParamSpec(
             name="CELL_PAD_IN_SITES_GLOBAL_PLACEMENT", stage="PL", ptype="int",
@@ -138,6 +150,7 @@ PARAM_SPACE: Dict[str, List[ParamSpec]] = {
                 "(0–3). Larger values relieve local congestion and improve "
                 "routability, but effectively increase density pressure."
             ),
+            affects=('PL', 'CTS', 'RT'),
         ),
     ],
     "CTS": [
@@ -149,6 +162,7 @@ PARAM_SPACE: Dict[str, List[ParamSpec]] = {
                 "(10–200). Smaller = lower local skew but more buffers and "
                 "higher power; baseline not set (uses tool default)."
             ),
+            affects=('CTS', 'RT'),
         ),
         ParamSpec(
             name="CTS_CLUSTER_DIAMETER", stage="CTS", ptype="int",
@@ -158,6 +172,7 @@ PARAM_SPACE: Dict[str, List[ParamSpec]] = {
                 "(microns, 20–400). Smaller = more balanced clock tree but "
                 "more buffers inserted; baseline not set (uses tool default)."
             ),
+            affects=('CTS', 'RT'),
         ),
         ParamSpec(
             name="SETUP_SLACK_MARGIN", stage="CTS", ptype="float",
@@ -169,6 +184,7 @@ PARAM_SPACE: Dict[str, List[ParamSpec]] = {
                 "area/power). Note: this variable also affects repair_timing "
                 "in FP/GRT stages; it is managed under CTS for convenience."
             ),
+            affects=('FP', 'PL', 'CTS', 'RT'),
         ),
     ],
     "RT": [
@@ -185,6 +201,7 @@ PARAM_SPACE: Dict[str, List[ParamSpec]] = {
                 "it via FASTROUTE_TCL."
             ),
             kind=KIND_FASTROUTE_ADJ,
+            affects=('RT',),
         ),
         ParamSpec(
             name="GRT_CONGESTION_ITERATIONS", stage="RT", ptype="int",
@@ -197,6 +214,7 @@ PARAM_SPACE: Dict[str, List[ParamSpec]] = {
                 "leave residual congestion. Flow default is 30."
             ),
             kind=KIND_GRT_ARGS,
+            affects=('RT',),
         ),
     ],
 }

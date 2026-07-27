@@ -126,14 +126,55 @@ class CheckpointManager:
                 )
         return (len(errors) == 0, errors)
 
-    def is_compatible(self, cp: CheckpointRef, new_param_hash: str) -> bool:
+    def is_compatible(self, cp: CheckpointRef,
+                      new_params: Dict[str, Dict[str, Any]],
+                      old_params: Dict[str, Dict[str, Any]]) -> bool:
         """Check whether new parameters are compatible with this checkpoint.
 
-        Currently strict: param_hash must match exactly.  In the future,
-        ParameterSpec.affects_stages could allow partial matching (e.g.
-        changing a routing-only param doesn't invalidate an FP checkpoint).
+        A checkpoint at stage S is compatible when none of the parameters
+        that *changed* affect any stage up to and including S.  Parameters
+        that only affect downstream stages (after S) do NOT invalidate the
+        checkpoint.
+
+        Example: a checkpoint at FP is invalidated by CORE_UTILIZATION
+        changes (affects FP+PL+CTS+RT), but NOT by FASTROUTE_LAYER_ADJUSTMENT
+        changes (affects RT only).
+
+        Args:
+            cp:         the checkpoint to check.
+            new_params: proposed parameters {stage: {param: value}}.
+            old_params: parameters the checkpoint was created with.
         """
-        return cp.param_hash == new_param_hash
+        import config
+
+        stage_order = ["FP", "PL", "CTS", "RT"]
+        cp_stage_idx = stage_order.index(cp.stage) if cp.stage in stage_order else -1
+
+        # Collect all changed parameter names
+        changed_params: set = set()
+        for stage in stage_order:
+            old = old_params.get(stage, {})
+            new = new_params.get(stage, {})
+            all_names = set(old.keys()) | set(new.keys())
+            for name in all_names:
+                if old.get(name) != new.get(name):
+                    changed_params.add(name)
+
+        if not changed_params:
+            return True  # nothing changed
+
+        # Check each changed parameter: does it affect stages <= cp_stage_idx?
+        for name in changed_params:
+            spec = config.get_param_spec(name)
+            if spec is None:
+                # Unknown parameter: be conservative, assume incompatible
+                return False
+            for affected_stage in spec.affects:
+                affected_idx = stage_order.index(affected_stage) if affected_stage in stage_order else 999
+                if affected_idx <= cp_stage_idx:
+                    return False  # this change invalidates the checkpoint
+
+        return True
 
     # ------------------------------------------------------------------
     # Query
@@ -296,11 +337,18 @@ if __name__ == "__main__":
     is_ok2, errors2 = mgr.verify(cp)
     check(not is_ok2, "verify detects tampering")
 
-    # -- Compatibility --
-    same_hash = CheckpointManager.param_hash({"FP": {"CORE_UTILIZATION": 38}})
-    diff_hash = CheckpointManager.param_hash({"FP": {"CORE_UTILIZATION": 50}})
-    check(mgr.is_compatible(cp, same_hash), "compatible: same params")
-    check(not mgr.is_compatible(cp, diff_hash), "incompatible: different params")
+    # -- Compatibility (stage-aware via affects) --
+    base_params = {"FP": {"CORE_UTILIZATION": 38}, "PL": {}, "CTS": {}, "RT": {}}
+    same_params = {"FP": {"CORE_UTILIZATION": 38}, "PL": {}, "CTS": {}, "RT": {}}
+    diff_fp_params = {"FP": {"CORE_UTILIZATION": 50}, "PL": {}, "CTS": {}, "RT": {}}
+    rt_only_change = {"FP": {"CORE_UTILIZATION": 38}, "PL": {}, "CTS": {},
+                       "RT": {"FASTROUTE_LAYER_ADJUSTMENT": 0.25}}
+    check(mgr.is_compatible(cp, same_params, base_params),
+          "compatible: same params")
+    check(not mgr.is_compatible(cp, diff_fp_params, base_params),
+          "incompatible: FP param changed")
+    check(mgr.is_compatible(cp, rt_only_change, base_params),
+          "compatible: RT-only change vs FP checkpoint")
 
     # -- param_hash is deterministic --
     h1 = CheckpointManager.param_hash({"FP": {"A": 1, "B": 2}})
