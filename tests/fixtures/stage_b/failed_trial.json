@@ -1,0 +1,72 @@
+{
+  "trial_id": "fixture-gcd-002",
+  "experiment_id": "stage-b-fixture",
+  "parent_trial_id": "fixture-gcd-001",
+  "branch_stage": "PL",
+  "status": "failed",
+  "start_time": null,
+  "end_time": null,
+  "params": {},
+  "param_diff": {},
+  "final_qor": null,
+  "stage_results": [
+    {
+      "stage": "FP",
+      "status": "ok",
+      "elapsed_s": 10.0,
+      "exit_code": 0,
+      "log_path": null,
+      "stage_qor": {
+        "2_1_floorplan_ws_ps": -1154.1
+      },
+      "failure": null,
+      "error_message": null
+    },
+    {
+      "stage": "PL",
+      "status": "failed",
+      "elapsed_s": 15.0,
+      "exit_code": -11,
+      "log_path": null,
+      "stage_qor": {},
+      "failure": "tool_crash",
+      "error_message": "SIGSEGV in openroad"
+    },
+    {
+      "stage": "CTS",
+      "status": "skipped",
+      "elapsed_s": 0.0,
+      "exit_code": null,
+      "log_path": null,
+      "stage_qor": {},
+      "failure": null,
+      "error_message": null
+    },
+    {
+      "stage": "RT",
+      "status": "skipped",
+      "elapsed_s": 0.0,
+      "exit_code": null,
+      "log_path": null,
+      "stage_qor": {},
+      "failure": null,
+      "error_message": null
+    },
+    {
+      "stage": "finish",
+      "status": "skipped",
+      "elapsed_s": 0.0,
+      "exit_code": null,
+      "log_path": null,
+      "stage_qor": {},
+      "failure": null,
+      "error_message": null
+    }
+  ],
+  "failure": "tool_crash",
+  "error_message": "Simulated PL crash for fixture testing",
+  "checkpoint": null,
+  "config_hash": null,
+  "env_hash": null,
+  "artifact_dir": "/home/cheatnut/OpenROAD-flow-scripts/flow/agenticpd/runs/fixture-gcd-002"
+}
