@@ -71,8 +71,14 @@ def load_history(history_path: Path) -> List[Dict[str, Any]]:
     text = history_path.read_text(encoding="utf-8")
     # Detect format: JSONL starts with "{" on the first line
     if text.strip().startswith("{"):
-        # trials.jsonl: one TrialRecord per line
-        entries = []
+        # trials.jsonl: one TrialRecord per line.
+        # Dedup by trial_id (last-wins — create=“running” then update=“ok”),
+        # keep only “ok” trials, assign sequential iteration numbers starting
+        # from 0 so they align with tree node names (iter0_*, iter1_*, …).
+        # Dedup by trial_id (last-wins: create="running" → update="ok"),
+        # keeping first-appearance order for chronological iteration numbering.
+        trials: dict[str, dict] = {}
+        trial_order: list[str] = []
         for line in text.splitlines():
             line = line.strip()
             if not line:
@@ -81,10 +87,21 @@ def load_history(history_path: Path) -> List[Dict[str, Any]]:
                 tr = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            # Convert TrialRecord to history-entry format
+            tid = tr.get("trial_id")
+            if not tid:
+                continue
+            if tid not in trial_order:
+                trial_order.append(tid)
+            trials[tid] = tr  # last-wins dedup (status "running" → "ok")
+
+        entries = []
+        for tid in trial_order:  # chronological order
+            tr = trials[tid]
+            if tr.get("status") != "ok":
+                continue
             entries.append({
-                "iteration": len(entries),
-                "status": tr.get("status", "?"),
+                "iteration": len(entries),  # 0, 1, 2, … — matches tree
+                "status": "ok",
                 "params": tr.get("params", {}),
                 "qor": tr.get("final_qor"),
                 "elapsed_s": sum(
