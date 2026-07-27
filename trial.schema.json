@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Cheatnut/AgenticPD/trial.schema.json",
+  "title": "TrialRecord",
+  "description": "Complete record of one RTL-to-GDS backend execution (Stage B data model)",
+  "type": "object",
+  "required": [
+    "trial_id",
+    "experiment_id",
+    "status"
+  ],
+  "properties": {
+    "trial_id": {
+      "type": "string",
+      "description": "8-char hex UUID4"
+    },
+    "experiment_id": {
+      "type": "string"
+    },
+    "parent_trial_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "branch_stage": {
+      "enum": [
+        "FP",
+        "PL",
+        "CTS",
+        "RT",
+        null
+      ]
+    },
+    "status": {
+      "enum": [
+        "running",
+        "ok",
+        "failed"
+      ]
+    },
+    "start_time": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "end_time": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "params": {
+      "type": "object",
+      "description": "Per-stage resolved parameters {stage: {param: value}}"
+    },
+    "param_diff": {
+      "type": "object",
+      "description": "Changes from parent trial {param: {from: old, to: new}}"
+    },
+    "final_qor": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "wns_ps": {
+          "type": "number"
+        },
+        "tns_ps": {
+          "type": "number"
+        },
+        "area_um2": {
+          "type": "number"
+        },
+        "power_w": {
+          "type": "number"
+        }
+      }
+    },
+    "stage_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "stage",
+          "status",
+          "elapsed_s"
+        ],
+        "properties": {
+          "stage": {
+            "enum": [
+              "synth",
+              "FP",
+              "PL",
+              "CTS",
+              "RT",
+              "finish"
+            ]
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "failed",
+              "skipped"
+            ]
+          },
+          "elapsed_s": {
+            "type": "number",
+            "minimum": 0
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "log_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stage_qor": {
+            "type": "object"
+          },
+          "failure": {
+            "enum": [
+              "none",
+              "tool_crash",
+              "timeout",
+              "qor_incomplete",
+              "parse_error",
+              "legality_fail",
+              null
+            ]
+          },
+          "error_message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "failure": {
+      "enum": [
+        "none",
+        "tool_crash",
+        "timeout",
+        "qor_incomplete",
+        "parse_error",
+        "legality_fail",
+        null
+      ]
+    },
+    "error_message": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "checkpoint": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "checkpoint_id": {
+          "type": "string"
+        },
+        "source_trial_id": {
+          "type": "string"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "param_hash": {
+          "type": "string"
+        },
+        "orfs_commit": {
+          "type": "string"
+        },
+        "artifact_manifest": {
+          "type": "array"
+        },
+        "artifact_dir": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "config_hash": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "env_hash": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "artifact_dir": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}
