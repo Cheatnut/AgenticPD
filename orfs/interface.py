@@ -312,6 +312,10 @@ class ORFSRunner:
             for d in sorted(parent.iterdir()):
                 if not d.is_dir():
                     continue
+                if d.name == self.cfg.best_variant_name:
+                    continue  # best result, never wiped
+                if d.name == self.cfg.baseline_variant_name:
+                    continue  # shared baseline, never wiped
                 if d.name.startswith(self.cfg.variant_prefix):
                     shutil.rmtree(d)
                     removed += 1

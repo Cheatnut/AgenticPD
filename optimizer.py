@@ -12,6 +12,7 @@ Key changes vs. paper pseudo-code:
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -262,26 +263,50 @@ class Optimizer:
 
     # ------------------------------------------------------------------
     def run_baseline(self) -> RunResult:
-        """Baseline iteration: full run from root, building the first four tree layers."""
-        log.info("========== Iter #0 (Baseline, full run from ROOT) ==========")
+        """Baseline iteration: full run from root, building the first four tree layers.
+
+        Baseline params are always the same for a given design, so the
+        result is cached under ``runs/<platform>_<design>/.baseline/``.
+        Subsequent sessions reuse the cached trial and skip the ORFS run.
+        """
         stage_params = {s: dict(config.BASELINE_PARAMS.get(s, {}))
                         for s in config.STAGES}
-        variant = self.cfg.variant_name(0)
+        variant = self.cfg.baseline_variant_name
+        cache_dir = self.cfg.run_dir.parent / ".baseline" if self.cfg.run_dir else None
 
-        # Stage C6: begin trial record
+        # ---- try cache first ----
+        if cache_dir and cache_dir.is_dir():
+            cached_trial = cache_dir / "trial.json"
+            if cached_trial.is_file():
+                log.info("[OPTIMIZER] Baseline cache hit: %s (skipping ORFS run)", cache_dir)
+                data = json.loads(cached_trial.read_text(encoding="utf-8"))
+                trial = TrialRecord.from_dict(data)
+                self._current_trial = trial
+                # Rebuild history entry from cached trial
+                qor_dict = trial.final_qor
+                sq = {sr.stage: sr.stage_qor for sr in trial.stage_results if sr.stage_qor}
+                from utils import QoR as _QoR
+                qor = _QoR(**qor_dict) if qor_dict else None
+                result = RunResult(ok=True, variant=variant, qor=qor,
+                                   stage_qor=sq, elapsed_s=trial.elapsed_s)
+                self._record(0, stage_params, result, judge_decision=None)
+                if result.ok:
+                    chain = [(s, variant, stage_params.get(s, {}), sq.get(s))
+                             for s in config.STAGES]
+                    self._add_to_tree(0, ROOT_ID, chain)
+                self._persist()
+                return result
+
+        # ---- cache miss: run ORFS ----
+        log.info("========== Iter #0 (Baseline, full run from ROOT) ==========")
+        # Record trial (no trial_id reuse across sessions)
         self._begin_trial(0)
-
         result = self.runner.run_flow(stage_params, variant, 0)
-
-        # Register in tree: root -> FP -> PL -> CTS -> RT
         if result.ok:
             chain = [(s, variant, stage_params.get(s, {}),
                       result.stage_qor.get(s)) for s in config.STAGES]
             self._add_to_tree(0, ROOT_ID, chain)
-
         self._record(0, stage_params, result, judge_decision=None)
-
-        # Stage C6: finalize trial
         self._finalize_trial(
             status="ok" if result.ok else "failed",
             final_qor=result.qor,
@@ -289,7 +314,13 @@ class Optimizer:
             error_message=result.error,
             current_params=stage_params,
         )
-
+        # Save to cache for future sessions
+        if result.ok and cache_dir and self._current_trial:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            (cache_dir / "trial.json").write_text(
+                json.dumps(self._current_trial.to_dict(), ensure_ascii=False, indent=2),
+                encoding="utf-8")
+            log.info("[OPTIMIZER] Baseline cached to %s", cache_dir)
         if not result.ok:
             log.error("#0 [OPTIMIZER] Baseline failed (%s), continuing without reference",
                       result.error)

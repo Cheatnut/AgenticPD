@@ -295,6 +295,7 @@ class FrameworkConfig:
     timeout_s: int = 3600             # single flow timeout (seconds); gcd typically finishes in minutes
     variant_prefix: str = "agenticpd_iter"   # FLOW_VARIANT prefix for each iteration
     best_variant_name: str = "agenticpd_best"  # best result export directory (sibling to base)
+    baseline_variant_name: str = "agenticpd_baseline"  # shared baseline (never wiped, cached across sessions)
 
     # ---- Optimization loop ----
     iterations: int = 10              # number of iterations (excluding baseline #0)

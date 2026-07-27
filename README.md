@@ -71,6 +71,7 @@ python3 agenticpd/main.py --baseline-only --design gcd
 # 完整优化：基线 + N 次迭代
 python3 agenticpd/main.py --design gcd --iterations 3
 
+# 基线缓存：首次运行后，同一设计的后续实验复用缓存的基线（跳过 ORFS make）
 # 断点续跑（自动取 runs/<platform>_<design>/ 下最新一次会话目录）
 python3 agenticpd/main.py --resume latest
 
