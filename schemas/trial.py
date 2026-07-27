@@ -220,16 +220,19 @@ class TrialRecord:
     # ---- Computed convenience fields ----
     @property
     def elapsed_s(self) -> float:
-        """Total wall-clock time from start to end (sum of stage elapsed_s)."""
+        """Total wall-clock time. Prefers sum of per-stage elapsed_s
+        (which reflects actual tool runtime); falls back to start-end span."""
+        stage_sum = sum(sr.elapsed_s for sr in self.stage_results)
+        if stage_sum > 0:
+            return stage_sum
         if self.start_time and self.end_time:
-            # Prefer wall-clock span if recorded
             try:
                 start = datetime.fromisoformat(self.start_time)
                 end = datetime.fromisoformat(self.end_time)
                 return (end - start).total_seconds()
             except (ValueError, TypeError):
                 pass
-        return sum(sr.elapsed_s for sr in self.stage_results)
+        return 0.0
 
     @property
     def failed_stage(self) -> Optional[str]:
@@ -331,21 +334,25 @@ def append_trial_to_jsonl(trial: TrialRecord, jsonl_path: Path) -> None:
 
 
 def load_trials_from_jsonl(jsonl_path: Path) -> List[TrialRecord]:
-    """Load all trials from a JSONL file (one JSON object per line)."""
+    """Load all trials from a JSONL file (one JSON object per line).
+
+    Duplicate trial_ids (from multiple update() calls) are deduplicated;
+    only the last occurrence of each trial_id is kept.
+    """
     if not jsonl_path.exists():
         return []
-    trials: List[TrialRecord] = []
+    seen: dict = {}
     with open(jsonl_path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
             try:
-                trials.append(TrialRecord.from_dict(json.loads(line)))
+                trial = TrialRecord.from_dict(json.loads(line))
+                seen[trial.trial_id] = trial  # last-wins
             except (json.JSONDecodeError, KeyError, ValueError) as e:
-                # Skip corrupt lines but keep reading
                 print(f"[WARN] Skipping corrupt JSONL line: {e}")
-    return trials
+    return list(seen.values())
 
 
 # =============================================================================
