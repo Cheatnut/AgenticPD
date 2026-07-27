@@ -1,691 +1,674 @@
-# AgenticPD — LLM Multi-Agent Physical Design QoR Optimization Framework
+# AgenticPD — LLM 多智能体驱动的物理设计 QoR 优化框架
 
-A prototype implementation reproducing the paper *"AgenticPD: Stage-Aware Agentic
-Framework for Physical Design QoR Optimization"*: 1 Judge Agent + 4 Stage Agents
-(FP/PL/CTS/RT), iteratively tuning OpenROAD Flow Scripts (ORFS) flow parameters to
-optimize four QoR metrics: WNS / TNS / Area / Power. Supports any ORFS-compatible
-PDK/design combination such as nangate45, sky130hd, etc.
+复现论文 *"AgenticPD: Stage-Aware Agentic Framework for Physical Design QoR
+Optimization"* 的原型实现：1 个法官智能体（JudgeAgent）+ 4 个阶段智能体
+（FP/PL/CTS/RT），迭代调整 OpenROAD Flow Scripts（ORFS）的流程参数，
+优化 WNS / TNS / Area / Power 四项 QoR 指标。支持 nangate45、sky130hd 等
+ORFS 兼容的任意工艺/设计组合。
 
-Core mechanisms: **Optimization Tree + Branch Reuse** (zero-cost Bef-stage
-inheritance) → **Observation Tool** (exploration balance E(n) + stage bottleneck
-B(s)) → **Per-Stage Pipeline** (StageAgent calls LLM to generate params → make
-single stage → obtain real intermediate QoR → pass to next StageAgent) →
-**Automatic Tree Visualization** → **One-Click Cleanup**.
+核心机制：**优化树 + 分支复用**（Bef 阶段零成本继承）→ **观测工具**（探索平衡度
+E(n) + 阶段瓶颈 B(s)）→ **逐阶段流水线**（StageAgent 调 LLM 生成参数 → make 单阶段
+→ 获取真实中间 QoR → 传给下一个 StageAgent）→ **自动树可视化** → **一键清理**。
 
-## Results
-![AgenticPD](./attachments/optimization_tree.png)
+## AgenticPD 核心机制形式化整理
 
-## Formalized Core Mechanisms of AgenticPD
+### 1. 物理设计流程的形式化
 
-### 1. Formalization of the Physical Design Flow
-
-#### 1.1 Stages and Action Space
-Let the physical design flow be an ordered sequence of stages:
+#### 1.1 阶段与动作空间
+设物理设计流程为有序阶段序列：
 
 $$
 \mathcal{S} = (\text{FP},\ \text{PL},\ \text{CTS},\ \text{RT})
 $$
 
-Each stage $s \in \mathcal{S}$ has its own parameter space (action space) $\Theta_s$.
-The action space of the complete flow is the Cartesian product:
+每个阶段 $s \in \mathcal{S}$ 拥有自己的参数空间（动作空间）$\Theta_s$，则完整流程的动作空间为笛卡尔积：
 
 $$
 \Theta_{\mathrm{PD}} = \Theta_{\text{FP}} \times \Theta_{\text{PL}} \times \Theta_{\text{CTS}} \times \Theta_{\text{RT}}
 $$
 
-A complete flow run is uniquely determined by an action tuple:
+一次完整流程由一个动作元组唯一确定：
 
 $$
 \mathbf{a} = (a_{\text{FP}},\ a_{\text{PL}},\ a_{\text{CTS}},\ a_{\text{RT}}) \in \Theta_{\mathrm{PD}}
 $$
 
-where $a_s \in \Theta_s$ denotes the specific parameter values chosen at stage $s$.
+其中 $a_s \in \Theta_s$ 表示在阶段 $s$ 选取的具体参数值。
 
-#### 1.2 Branching and Predecessor/Successor Relations
-Since the stage order is fixed, any chosen stage $b \in \mathcal{S}$ partitions the flow into:
+#### 1.2 分支与前后继关系
+由于阶段顺序固定，任意选定阶段 $b \in \mathcal{S}$ 可将流程划分为：
 
-- **Predecessor stages**: $\mathrm{Bef}(b) = \{s \in \mathcal{S} \mid s \text{ precedes } b\}$
-- **Successor stages**: $\mathrm{Aft}(b) = \{s \in \mathcal{S} \mid s \text{ follows } b\}$
+- **前置阶段**：$\mathrm{Bef}(b) = \{s \in \mathcal{S} \mid s \text{ 在 } b \text{ 之前}\}$
+- **后置阶段**：$\mathrm{Aft}(b) = \{s \in \mathcal{S} \mid s \text{ 在 } b \text{ 之后}\}$
 
-**Example**: If $b = \text{CTS}$, then $\mathrm{Bef(CTS)} = \{\text{FP},\text{PL}\}$, $\mathrm{Aft(CTS)} = \{\text{RT}\}$.
+**示例**：若 $b = \text{CTS}$，则 $\mathrm{Bef(CTS)} = \{\text{FP},\text{PL}\}$，$\mathrm{Aft(CTS)} = \{\text{RT}\}$。
 
-#### 1.3 QoR Metrics
-After executing the complete flow $\mathbf{a}$, we obtain the post-route signoff
-metric tuple:
+#### 1.3 QoR 度量
+执行完整流程 $\mathbf{a}$ 后，获得后布线（post‑route）签核指标元组：
 
 $$
 Q(\mathbf{a}) = ( \text{WNS},\ \text{TNS},\ \text{Area},\ \text{Power} )
 $$
 
-where WNS (Worst Negative Slack) and TNS (Total Negative Slack) are timing metrics
-(higher is better), and area and power are lower-is-better. All optimization
-feedback is based on this real post-route result; **no intermediate proxy metrics
-are used**.
+其中 WNS（最差负时序裕量）和 TNS（总负时序裕量）为时序指标（越高越好），面积和功耗越低越好。所有优化反馈均基于该真实后布线结果，**不使用任何中间阶段代理指标**。
 
-### 2. Optimization Objective and Iterative Process
+### 2. 优化目标与迭代过程
 
-Given an iteration budget $N$, the optimizer sequentially produces $N$ complete
-flow actions $\mathbf{a}_1, \mathbf{a}_2, \ldots, \mathbf{a}_N$, aiming to
-maximize the best post-route QoR (timing-first):
+给定迭代预算 $N$，优化器依次产生 $N$ 个完整流程动作 $\mathbf{a}_1, \mathbf{a}_2, \ldots, \mathbf{a}_N$，目标是最大化最优后布线 QoR（时序优先）：
 
 $$
 \max_{k \in \{1,\ldots,N\}} Q(\mathbf{a}_k)
 $$
 
-The final reported result is the historical best candidate $\mathbf{a}^* = \arg\max_k Q(\mathbf{a}_k)$, whose QoR has already been measured during iteration — no additional evaluation is needed.
+最终报告结果为历史最优候选 $\mathbf{a}^* = \arg\max_k Q(\mathbf{a}_k)$，其 QoR 已在迭代中测得，无需额外评估。
 
-### 3. Optimization Tree and Branching Mechanism
+### 3. 优化树与分支机制
 
-#### 3.1 Tree Structure Definition
-All historical execution results are organized as a rooted tree $\mathcal{T}$. The
-root node $n_0$ represents the post-synthesis netlist (PD input). Each time a stage
-$s$ is executed, a node is created:
+#### 3.1 树结构定义
+所有历史执行结果组织为一棵有根树 $\mathcal{T}$。根节点 $n_0$ 代表综合后的网表（PD 输入）。每次执行阶段 $s$ 时，创建一个节点：
 
 $$
 n_k^s = \big( a_k(s),\ Q_k(s) \big)
 $$
 
-where $a_k(s)$ is the action taken at that stage and $Q_k(s)$ is the observed
-stage-level QoR after executing that stage.  
-Each complete path from root to leaf (sequentially passing through FP, PL, CTS, RT)
-corresponds to a complete action tuple $\mathbf{a}_k$.
+其中 $a_k(s)$ 是该阶段采取的动作，$Q_k(s)$ 是该阶段执行后观测到的阶段性 QoR。  
+从根到叶的每条完整路径（依次经过 FP、PL、CTS、RT）对应一个完整的动作元组 $\mathbf{a}_k$。
 
-#### 3.2 Branch Operation
-In iteration $k$, the optimizer selects an existing intermediate node $\hat{n}$
-(located at some stage $b \in \mathcal{S}$) and starts a new branch from it.
-The new branch:
+#### 3.2 分支操作
+在迭代 $k$ 中，优化器选择一个已存在的中间节点 $\hat{n}$（位于某个阶段 $b \in \mathcal{S}$），从该节点出发启动新分支。则新分支：
 
-- **Reuses** all results from $\mathrm{Bef}(b)$ stages (i.e., inherits actions and
-  QoR along the ancestor path), at **zero cost**;
-- **Re-executes** the $\{b\} \cup \mathrm{Aft}(b)$ stages, producing new actions
-  and new nodes.
+- **复用** $\mathrm{Bef}(b)$ 阶段的所有结果（即继承祖先路径上的动作与 QoR），**成本为零**；
+- **重新执行** $\{b\} \cup \mathrm{Aft}(b)$ 阶段，产生新的动作和新的节点。
 
-The new nodes are mounted as a subtree under $\hat{n}$:
+新节点作为子树挂载到 $\hat{n}$ 下：
 
 $$
 \mathcal{T}_k = \mathcal{T}_{k-1} \ \cup \ \{ n_k^s \mid s \in \{b_k\} \cup \mathrm{Aft}(b_k) \}
 $$
 
-where $b_k$ is the branch stage chosen at iteration $k$. In particular, if
-$b_k = \text{FP}$, the branch starts from the root node, equivalent to running a
-brand-new flow from scratch.
+其中 $b_k$ 为第 $k$ 次迭代选定的分支阶段。特别地，若 $b_k = \text{FP}$，则从根节点分支，等价于从头运行全新流程。
 
-> **Note**: The branching mechanism avoids re-running all stages every iteration,
-> concentrating the precious budget on later stages that have room for improvement,
-> achieving "incremental" optimization.
+> **说明**：分支机制避免了每次迭代都重复运行所有阶段，能将宝贵预算集中在有提升空间的后期阶段，实现"增量式"优化。
 
-### 4. Judge Agent
+### 4. 法官智能体（Judge Agent）
 
-The Judge Agent consists of a generic LLM engine $\mathcal{L}$, a prompt
-$\mathcal{P}_J$, and harness skills $\mathcal{U}_J$:
+法官智能体由通用 LLM 引擎 $\mathcal{L}$、Prompt $\mathcal{P}_J$ 和Harness Skills $\mathcal{U}_J$ 构成：
 
 $$
 \text{Judge} = (\mathcal{L},\ \mathcal{P}_J,\ \mathcal{U}_J)
 $$
 
-#### 4.1 Input: Optimization History
-At the start of iteration $k$, the harness provides the Judge with historical
-records $\mathcal{H}_k$:
+#### 4.1 输入：优化历史
+在迭代 $k$ 开始时，Harness向法官提供历史记录 $\mathcal{H}_k$：
 
 $$
 \mathcal{H}_k = \{\ (\hat{n}_i,\ b_i,\ \{Q_i(s)\}_{s \ge b_i})\ \}_{i=1}^{k-1}
 $$
 
-Each history entry includes: the branch origin node $\hat{n}_i$ at iteration $i$,
-the branch stage $b_i$, and the QoR of each stage from $b_i$ through RT.
+每个历史条目包含：第 $i$ 次迭代的分支起始节点 $\hat{n}_i$、分支阶段 $b_i$，以及该分支执行后各阶段（从 $b_i$ 到 RT）的 QoR。
 
-#### 4.2 Observation Tool
-The Observation Tool built into the harness $\mathcal{U}_J$ computes an adaptive
-summary $\mathcal{A}_k$ from $\mathcal{H}_k$ and the current tree $\mathcal{T}_k$,
-containing two key signals:
+#### 4.2 观测工具（Observation Tool）
+Harness $\mathcal{U}_J$ 内置的观测工具根据 $\mathcal{H}_k$ 和当前树 $\mathcal{T}_k$，计算自适应概要 $\mathcal{A}_k$，包含两个关键信号：
 
-- **Exploration balance** $E(n)$: the number of times each node $n$ has been
-  chosen as a branch origin — used to identify over-explored/under-explored regions.
-- **Stage bottleneck** $B(s)$: the gap between each stage's current QoR and the
-  historical best — used to locate the current weakest link.
+- **探索平衡度** $E(n)$：每个节点 $n$ 被选为分支起点的次数，用于识别过探索/欠探索区域。
+- **阶段瓶颈** $B(s)$：每个阶段的当前 QoR 与历史最优的差距，用于定位当前最薄弱的环节。
 
-The Observation Tool packages these two signals together with a tree structure
-snapshot into a search state profile, serving as the Judge's observation input
-(rather than a raw history dump, to control token cost).
+观测工具将这两个信号连同树结构快照组装成搜索状态概要(search state profile)，作为法官的观测输入（而非原始历史转储，以控制 token 开销）。
 
-#### 4.3 Decision Output
-Based on the summary, the Judge produces a decision:
+#### 4.3 决策输出
+基于概要，法官产生决策：
 
 $$
 \mathcal{D}_k = (\hat{n}_k,\ b_k,\ \{ \text{hint}_s \}_{s \in \{b_k\}\cup \mathrm{Aft}(b_k)} )
 $$
 
-- $\hat{n}_k$: the chosen branch node (balancing exploration and exploitation,
-  guided by $E(n)$);
-- $b_k$: the chosen branch stage (typically the stage with the largest bottleneck
-  $B(s)$);
-- Provides one text hint for each downstream stage about to be executed, guiding
-  that Stage Agent on how to adjust parameters.
+- $\hat{n}_k$：选定的分支节点（平衡探索与利用，由 $E(n)$ 引导）；
+- $b_k$：选定的分支阶段（通常选择瓶颈最大的阶段 $B(s)$）；
+- 为每个将要执行的下游阶段提供一条文本提示（hint），指导该阶段智能体如何调整参数。
 
 
-### 5. Stage Agents
+### 5. 阶段智能体（Stage Agent）
 
-Each stage $s$ has a dedicated Stage Agent:
+每个阶段 $s$ 拥有一个专属的阶段智能体：
 
 $$
 \text{StageAgent}_s = (\mathcal{L},\ \mathcal{P}_s,\ \mathcal{U}_s)
 $$
 
-where $\mathcal{P}_s$ is the stage-specific system prompt (describing
-responsibilities, parameter ranges, optimization targets, etc.) and $\mathcal{U}_s$
-is the stage's **PD skill**, responsible for interacting with backend tools
-(executing the stage, returning QoR).
+其中 $\mathcal{P}_s$ 是该阶段的系统提示（描述职责、参数范围、优化目标等），$\mathcal{U}_s$ 是该阶段的 **PD 技能**，负责与后端工具交互（执行阶段、返回 QoR）。
 
-#### 5.1 Execution Context
-After the Judge selects a branch $b_k$, stages $s \in \{b_k\} \cup \mathrm{Aft}(b_k)$
-are executed in order. For each stage $s$, the harness builds a context:
+#### 5.1 执行上下文
+在法官选定分支 $b_k$ 后，依次执行 $s \in \{b_k\} \cup \mathrm{Aft}(b_k)$。对于每个阶段 $s$，Harness为它构建上下文：
 
 $$
 \text{ctx}_s = \big( \{Q_k(i)\}_{i \in \mathrm{Bef}(s)},\ e_s,\ \text{hint}_s \big)
 $$
 
-- $\{Q_k(i)\}_{i \in \mathrm{Bef}(s)}$: QoR results from the already-completed
-  upstream stages in the current branch;
-- $e_s$: historical experience for this stage across iterations (e.g., previously
-  tried parameters and their results);
-- $\text{hint}_s$: the Judge's dedicated hint for this stage.
+- $\{Q_k(i)\}_{i \in \mathrm{Bef}(s)}$：当前分支中上游阶段（已完成）的 QoR 结果；
+- $e_s$：该阶段跨迭代的历史经验（如之前尝试过的参数及结果）；
+- $\text{hint}_s$：法官专门给该阶段的提示。
 
-#### 5.2 Action Generation and Execution
-The Stage Agent reasons from $\text{ctx}_s$ and outputs a concrete action
-$a_k(s) \in \Theta_s$. The harness then invokes its PD skill to execute the stage:
+#### 5.2 动作生成与执行
+阶段智能体根据 $\text{ctx}_s$ 推理，输出一个具体动作 $a_k(s) \in \Theta_s$。然后Harness调用其 PD 技能执行该阶段：
 
 $$
 a_k(s) = \pi_s(\text{ctx}_s), \quad Q_k(s) = \text{Execute}(s,\ a_k(s))
 $$
 
-After execution, $Q_k(s)$ is recorded and passed as upstream QoR to the next stage.
+执行完成后，$Q_k(s)$ 被记录，并作为上游 QoR 传递给下一个阶段。
 
-> **Explanation**: Each Stage Agent focuses only on parameter adjustment for its
-> own stage, without needing to understand the global tree structure, reducing the
-> decision complexity for individual agents. The Judge handles global navigation;
-> Stage Agents handle local optimization — a clean separation of responsibilities.
+> **文字说明**：每个阶段智能体只关注本阶段的参数调整，无需了解全局树结构，降低了单个智能体的决策复杂度。法官负责全局导航，阶段智能体负责局部优化，形成清晰的职责分离。
 
 
 
-### 6. Overall Optimization Loop (Pseudocode)
+### 6. 整体优化循环（伪代码）
 
 ```
-Input:  Design D, iteration budget N, initial action a0
-Output: Optimal action a* and its post-route QoR Q*
+输入：设计 D，迭代预算 N，初始动作 a0
+输出：最优动作 a* 及其后布线 QoR Q*
 
-1.  Run the initial complete flow (a0), record all stage QoRs,
-    initialize tree T and history H
-2.  Q* = Q(a0), a* = a0
-3.  for k = 1 to N do
-4.      A_k = ObservationTool(T, H)          // generate adaptive summary
-5.      (n_hat, b, hints) = Judge(H, A_k)    // Judge decision
-6.      Reuse Bef(b) results (inherit from node n_hat)
-7.      for s in {b} ∪ Aft(b) do             // execute in order
-8.          ctx = BuildContext(s, n_hat, hints[s])  // build context
-9.          a_k(s) = StageAgent_s(ctx)               // Stage Agent generates action
-10.         Q_k(s) = ExecuteStage(s, a_k(s))          // execute and obtain QoR
-11.     end for
-12.     Update T and H (add new nodes)
-13.     If the current candidate's timing beats Q* and meets
-        area/power constraints, update (a*, Q*)
+1. 运行初始完整流程 (a0)，记录所有阶段 QoR，初始化树 T 和历史 H
+2. Q* = Q(a0), a* = a0
+3. for k = 1 to N do
+4.     A_k = ObservationTool(T, H)          // 生成自适应概要
+5.     (n_hat, b, hints) = Judge(H, A_k)    // 法官决策
+6.     复用 Bef(b) 的结果（从节点 n_hat 继承）
+7.     for s in {b} ∪ Aft(b) do             // 按顺序执行
+8.         ctx = BuildContext(s, n_hat, hints[s])  // 构建上下文
+9.         a_k(s) = StageAgent_s(ctx)               // 阶段智能体生成动作
+10.        Q_k(s) = ExecuteStage(s, a_k(s))          // 执行并获取 QoR
+11.    end for
+12.    更新 T 和 H（加入新节点）
+13.    如果当前候选的时序指标优于 Q* 且满足面积/功耗约束，则更新 (a*, Q*)
 14. end for
-15. return (a*, Q*)
+15. 返回 (a*, Q*)
 ```
 
-### 7. Summary of Key Design Points
+### 7. 关键设计要点总结
 
-| Component | Role | Input | Output |
-|-----------|------|-------|--------|
-| **Judge Agent** | Global navigation: select branch node and branch stage, generate hints | History + adaptive summary | Branch decision + per-stage hints |
-| **Observation Tool** | Compress history into exploration balance and stage bottleneck | Tree T + history H | Adaptive summary A |
-| **Stage Agent** | Local optimization: generate concrete params for its stage | Upstream QoR + cross-iteration experience + hint | Stage action |
-| **Optimization Tree** | Store all attempts and their QoRs, support branch reuse | — | Search space structure |
-| **Harness** | Coordinate agent scheduling, context assembly, tool execution | — | Complete iterative closed loop |
+| 组件 | 功能 | 输入 | 输出 |
+|------|------|------|------|
+| **Judge Agnet** | 全局导航：选择分支节点和分支阶段，生成 hint | 历史记录 + 自适应概要 | 分支决策 + 各阶段 hint |
+| **Observation Tool** | 压缩历史为探索平衡度和阶段瓶颈 | 树 T + 历史 H | 自适应概要 A |
+| **Stage Agent** | 局部优化：为所属阶段生成具体参数 | 上游 QoR + 跨迭代经验 + hint | 该阶段动作 |
+| **Optimization Tree** | 存储所有尝试及其 QoR，支持分支复用 | - | 搜索空间结构 |
+| **Harness** | 协调智能体调度、上下文组装、工具执行 | - | 完整的迭代闭环 |
 
 ---
 
-## Directory Structure
+## 目录结构
 
 ```
 flow/agenticpd/
-├── .env                      # API key goes here
+├── .env                      # 放API key 
 ├── .gitignore
-├── config.py                 # Global config (param space, paths, hyperparams — single source of truth)
-├── optimization_tree.py      # Optimization tree T: node CRUD, E(n) tracking, JSON serialization
-├── orfs_interface.py         # ORFS invocation: full run, branch, per-stage, QoR parsing, best export
-├── llm_interface.py          # DeepSeek API client + MockLLMClient (retry, JSON feedback loop)
+├── config.py                 # 全局配置（参数空间、路径、超参，唯一配置来源）
+├── optimization_tree.py      # 优化树 T：节点增删查、E(n) 维护、JSON 序列化
+├── orfs_interface.py         # ORFS 调用：全跑、分支、逐阶段、QoR 解析、最佳导出
+├── llm_interface.py          # DeepSeek API 客户端 + MockLLMClient（重试、JSON 回喂重问）
 ├── agents.py                 # BaseAgent / JudgeAgent / StageAgent ×4 / ObservationTool
-├── optimizer.py              # Main loop: tree build, baseline, observation summary, branch decision, stage pipeline scheduling
-├── utils.py                  # Utilities: QoR dataclass, JSON extraction, comparator, logging
-├── main.py                   # CLI entry point
-├── visualize_tree.py         # Tree visualization → optimization_tree.png (auto-invoked after main.py)
-├── clean.py                  # Artifact cleanup (by platform/design; base is protected)
+├── optimizer.py              # 主循环：建树、基线、观测概要、分支决策、阶段流水线调度
+├── utils.py                  # 工具集:QoR 数据类、JSON 提取、比较器、日志
+├── main.py                   # 主程序文件,CLI 入口
+├── visualize_tree.py         # 树可视化 → optimization_tree.png（main.py 完成后自动调用）
+├── clean.py                  # 产物清理（按 platform/design 删除，base 受保护）
 ├── requirements.txt
-└── runs/                     # Per-run working directories (auto-created)
+└── runs/                     # 各次运行的工作目录（自动创建）
 ```
 
-## Environment Setup
+## 环境准备
 
-1. **Prerequisites**: WSL Ubuntu, Python >= 3.10, ORFS already working
-   (`cd flow && make DESIGN_CONFIG=./designs/sky130hd/gcd/config.mk` must succeed).
+1. **前提**：WSL Ubuntu，Python >= 3.10，ORFS 已可正常运行
+   （`cd flow && make DESIGN_CONFIG=./designs/sky130hd/gcd/config.mk` 能跑通）。
 
-2. **Install Python dependencies**:
+2. **安装 Python 依赖**：
    ```bash
    pip3 install -r flow/agenticpd/requirements.txt
    ```
 
-3. **Configure API key** (never committed to code/repo):
+3. **配置 API key**（永不写进代码/commit）：
    ```bash
-   # Option A: .env file (recommended)
+   # 方式 A：.env 文件（推荐）
    cp flow/agenticpd/.env.example flow/agenticpd/.env
-   # Edit .env and fill in the real key
+   # 编辑 .env 填入真实 key
 
-   # Option B: environment variable
+   # 方式 B：环境变量
    export DEEPSEEK_API_KEY=sk-...
    ```
 
-## Running
+## 运行
 
-All commands are executed from the `flow/` directory:
+所有命令在 `flow/` 目录下执行：
 
 ```bash
 cd flow
 
-# Full optimization: baseline + N iterations (requires API key)
+# 完整优化：基线 + N 次迭代（需要 API key）
 python3 agenticpd/main.py --iterations 10 --platform nangate45 --design gcd
 
-# Resume from checkpoint (auto-picks latest run under runs/)
+# 断点续跑（自动取 runs/ 下最新一次）
 python3 agenticpd/main.py --resume
 
-# Debug modes (zero token / zero EDA):
-python3 agenticpd/main.py --parse-only base               # Only parse QoR of an existing variant
-python3 agenticpd/main.py --baseline-only                 # Run baseline ORFS once
-python3 agenticpd/main.py --dry-run --mock-orfs --iterations 5  # Full mock, finishes in seconds
-python3 agenticpd/main.py --dry-run --iterations 2        # MockLLM + real ORFS
+# 调试模式（零 token / 零 EDA）：
+python3 agenticpd/main.py --parse-only base               # 只解析已有 variant 的 QoR
+python3 agenticpd/main.py --baseline-only                 # 只跑一次基线 ORFS
+python3 agenticpd/main.py --dry-run --mock-orfs --iterations 5  # 全 mock 秒级跑完
+python3 agenticpd/main.py --dry-run --iterations 2        # MockLLM + 真实 ORFS
 
-# Clean all artifacts for a specific design (base unaffected):
-python3 agenticpd/clean.py --target nangate45 gcd --dry-run   # Preview
-python3 agenticpd/clean.py --target nangate45 gcd             # Confirm then delete
-python3 agenticpd/clean.py --target nangate45 gcd --yes       # Skip confirmation
+# 清理指定设计的所有产物（base 不受影响）：
+python3 agenticpd/clean.py --target nangate45 gcd --dry-run   # 预览
+python3 agenticpd/clean.py --target nangate45 gcd             # 确认后删除
+python3 agenticpd/clean.py --target nangate45 gcd --yes       # 跳过确认直接删
 
-# Generate tree visualization from an existing run:
+# 从已有运行生成树可视化：
 python3 agenticpd/visualize_tree.py runs/20260718_210019
 ```
 
-Common options: `--design`, `--platform`, `--timeout` (seconds), `--wns-tol`/`--tns-tol` (ps),
-`--log-level DEBUG` (full prompts written to agenticpd.log).
+常用选项：`--design`、`--platform`、`--timeout`（秒）、`--wns-tol`/`--tns-tol`（ps）、
+`--log-level DEBUG`（完整 prompt 输出到 agenticpd.log）。
 
-## Output Locations
+## 输出位置
 
-| Content | Path | Notes |
+| 内容 | 路径 | 说明 |
 |---|---|---|
-| Best artifacts | `flow/results/<plat>/<design>/agenticpd_best/` | Final GDS/DEF/netlist + reports + `agenticpd_summary.json` |
-| Per-iteration artifacts | `flow/{results,logs,reports,objects}/<plat>/<design>/agenticpd_iter<N>/` | FLOW_VARIANT isolation; `base` never touched |
-| Optimization tree PNG | `runs/<timestamp>/optimization_tree.png` | Auto-generated after each run |
-| history.json | `runs/<timestamp>/history.json` | Flat optimization log (full fields below) |
-| tree.json | `runs/<timestamp>/tree.json` | Optimization tree T: nodes + parent-child + E(n) |
-| agenticpd.log | `runs/<timestamp>/agenticpd.log` | Framework log; `--log-level DEBUG` includes full prompts |
-| iterN_{stage}.make.log | `runs/<timestamp>/iterN_{stage}.make.log` | ORFS make stdout/stderr per stage |
-| fastroute_iterN.tcl | `runs/<timestamp>/fastroute_iterN.tcl` | Custom routing layer capacity script per iteration |
-| config_snapshot.json | `runs/<timestamp>/config_snapshot.json` | Full config archive for this run |
+| 最佳产物 | `flow/results/<plat>/<design>/agenticpd_best/` | 最终 GDS/DEF/网表 + 报告 + `agenticpd_summary.json` |
+| 每轮迭代产物 | `flow/{results,logs,reports,objects}/<plat>/<design>/agenticpd_iter<N>/` | FLOW_VARIANT 隔离，`base` 永不触碰 |
+| 优化树 PNG | `runs/<时间戳>/optimization_tree.png` | 每次运行结束后自动生成 |
+| history.json | `runs/<时间戳>/history.json` | 平面优化日志（完整字段见下方） |
+| tree.json | `runs/<时间戳>/tree.json` | 优化树 T：节点 + 父子关系 + E(n) |
+| agenticpd.log | `runs/<时间戳>/agenticpd.log` | 框架日志；`--log-level DEBUG` 含完整 prompt |
+| iterN_{stage}.make.log | `runs/<时间戳>/iterN_{stage}.make.log` | 各阶段 ORFS make stdout/stderr |
+| fastroute_iterN.tcl | `runs/<时间戳>/fastroute_iterN.tcl` | 每轮生成的定制布线层容量脚本 |
+| config_snapshot.json | `runs/<时间戳>/config_snapshot.json` | 当次运行的完整配置存档 |
 
+## 日志格式
 
-## Parameter Space
+控制台日志使用紧凑的 `#N [AGENT] ...` 格式（无时间戳），httpx/openai 的 HTTP 请求日志已抑制：
 
-Defined in `config.py::PARAM_SPACE`. Must be re-evaluated when switching designs/PDKs.
+```
+========== Iter #1 ==========
+#1 [Judge Agent] branch_node = iter0_PL
+#1 [Judge Agent] branch_stage = CTS
+#1 [Judge Agent] @CTS Agent: 采用较大的聚类规模和直径以减少缓冲器插入……
+#1 [Judge Agent] @RT Agent: 保持默认布线参数，减少变量……
+#1 [CTS Agent] 按法官提示增大簇规模和直径以减少缓冲器插入、降低功耗……
+#1 [CTS Agent] set CTS params...
+#1 [CTS Agent] CTS_CLUSTER_SIZE: 100
+#1 [CTS Agent] CTS_CLUSTER_DIAMETER: 200
+#1 [CTS Agent] SETUP_SLACK_MARGIN: 0.05
+#1 [ORFS] make cts...
+#1 [ORFS] CTS done!(2.7s)
+#1 [ORFS] CTS QoR: 4_1_cts_tns_ps=0.0, 4_1_cts_ws_ps=31.1
+……
+#1 [ORFS] Iter #1 finish!(37.2s)
+#1 [ORFS] Iter #1 final QoR: WNS=35.7ps TNS=0.0ps Area=873.8um2 Power=3.3377mW
+#1 [OPTIMIZER] ★ Global best updated to Iter #1: WNS=35.7ps …
 
-| Stage | Parameter | Type/Range | Default | Description |
+=================== Final Results ===================
+[OPTIMIZER] #0 WNS=11.4ps TNS=0.0ps Area=714.7um2 Power=2.6323mW
+[OPTIMIZER] #1 WNS=35.7ps TNS=0.0ps Area=873.8um2 Power=3.3377mW  *BEST*
+[OPTIMIZER] Global best: Iter #1
+```
+
+日志文件 `agenticpd.log` 格式与控制台一致（无时间戳）。
+
+## 参数空间
+
+定义于 `config.py::PARAM_SPACE`。换设计/工艺时需重新审视各参数范围。
+
+| 阶段 | 参数 | 类型/范围 | 默认 | 说明 |
 |---|---|---|---|---|
-| FP  | CORE_UTILIZATION | int 20–50 | 38 | Core utilization (%). Higher = smaller area but more routing congestion |
-| FP  | CORE_ASPECT_RATIO | float 0.5–2.0 | 1.0 | Core aspect ratio (height/width). 1.0 = square |
-| PL  | PLACE_DENSITY_LB_ADDON | float 0.0–0.2 | unset | Placement density margin. When set, actual density = lower bound + addon |
-| PL  | CELL_PAD_IN_SITES_GLOBAL_PLACEMENT | int 0–3 | 0 | Cell padding in sites during global placement |
-| CTS | CTS_CLUSTER_SIZE | int 10–200 | unset | Max sinks per clock sink cluster |
-| CTS | CTS_CLUSTER_DIAMETER | int 20–400 | unset | Max cluster diameter (µm) |
-| CTS | SETUP_SLACK_MARGIN | float 0–0.2 | 0.0 | repair_timing setup slack margin (ns) |
-| RT  | FASTROUTE_LAYER_ADJUSTMENT | float 0.1–0.3 | 0.2 | Pseudo-param: generates fastroute.tcl, passed via FASTROUTE_TCL |
-| RT  | GRT_CONGESTION_ITERATIONS | int 10–50 | 30 | Pseudo-param: rendered into GLOBAL_ROUTE_ARGS as -congestion_iterations |
+| FP  | CORE_UTILIZATION | int 20–50 | 38 | 核心区利用率（%）。越高面积越小但布线越拥挤 |
+| FP  | CORE_ASPECT_RATIO | float 0.5–2.0 | 1.0 | 核心区高宽比。1.0 为正方形 |
+| PL  | PLACE_DENSITY_LB_ADDON | float 0.0–0.2 | 不设 | 布局密度余量。设置后实际密度 = 下界 + 余量 |
+| PL  | CELL_PAD_IN_SITES_GLOBAL_PLACEMENT | int 0–3 | 0 | 全局布局阶段单元 padding（site 数） |
+| CTS | CTS_CLUSTER_SIZE | int 10–200 | 不设 | 时钟 sink 聚类最大 sink 数 |
+| CTS | CTS_CLUSTER_DIAMETER | int 20–400 | 不设 | 聚类最大直径（μm） |
+| CTS | SETUP_SLACK_MARGIN | float 0–0.2 | 0.0 | repair_timing setup 裕量（ns） |
+| RT  | FASTROUTE_LAYER_ADJUSTMENT | float 0.1–0.3 | 0.2 | 伪参数：生成 fastroute.tcl 并传 FASTROUTE_TCL |
+| RT  | GRT_CONGESTION_ITERATIONS | int 10–50 | 30 | 伪参数：渲染进 GLOBAL_ROUTE_ARGS 的 -congestion_iterations |
 
-Two implementation notes (see `config.py` comments for details):
+两条实现说明（详见 `config.py` 注释）：
 
-1. sky130hd's `FASTROUTE_TCL` bypasses the `ROUTING_LAYER_ADJUSTMENT` env var
-   (layer capacity hardcoded at 0.2), so the RT capacity parameter uses the official
-   AutoTuner approach: generate a custom fastroute.tcl from a template.
-2. QoR extraction prioritizes JSON metrics from `logs/.../6_report.json`
-   (rpt/log regex fallback); timing values in JSON are in ns and uniformly
-   converted ×1000 to ps by the framework.
+1. sky130hd 的 `FASTROUTE_TCL` 会绕过 `ROUTING_LAYER_ADJUSTMENT` 环境变量
+   （层容量硬编码 0.2），因此 RT 容量参数采用官方 AutoTuner 同款方案：
+   按模板生成自定义 fastroute.tcl。
+2. QoR 提取以 `logs/.../6_report.json` 的 JSON metrics 为主（rpt/log 正则兜底）；
+   时序值在 JSON 中为 ns，框架统一 ×1000 转 ps。
 
-To modify the parameter space, only edit `PARAM_SPACE` in `config.py`;
-prompts and validation will auto-adapt.
+修改参数空间只需编辑 `config.py` 的 `PARAM_SPACE`，prompt 与校验会自动适配。
 
 ---
 
-## Core Data Structures
+## 核心数据结构
 
-### Optimization Tree T — `optimization_tree.py` (paper §3)
+### 优化树 T — `optimization_tree.py`（论文 §3）
 
-`OptimizationTree` manages a rooted tree. The root node `node_id="root"`
-(stage="root") represents the post-synthesis netlist. Each successful iteration
-mounts a stage node chain (FP→PL→CTS→RT) in the tree; node `node_id` format is
-`"iter<N>_<STAGE>"` (e.g. `"iter2_PL"`).
+`OptimizationTree` 管理一棵有根树。根节点 `node_id="root"`（stage="root"）代表综合网表。
+每次成功迭代在树中挂载一条阶段节点链（FP→PL→CTS→RT），节点 `node_id` 格式为
+`"iter<N>_<STAGE>"`（如 `"iter2_PL"`）。
 
-**Node fields** (`OptimNode` dataclass):
+**节点字段**（`OptimNode` dataclass）：
 
-| Field | Type | Description |
+| 字段 | 类型 | 说明 |
 |---|---|---|
-| node_id | str | `"root"` or `"iter<N>_<STAGE>"` |
-| iteration | int | Iteration that created this node |
+| node_id | str | `"root"` 或 `"iter<N>_<STAGE>"` |
+| iteration | int | 创建该节点的迭代号 |
 | stage | str | `"root"` / `"FP"` / `"PL"` / `"CTS"` / `"RT"` |
-| variant | str | FLOW_VARIANT where this stage's artifacts live (used for branch copying) |
-| params | dict | **This stage only** params {name: value} |
-| stage_qor | dict\|None | Intermediate QoR snapshot after this stage |
-| parent_id | str\|None | Parent node_id (None for root) |
-| children_ids | list[str] | Child node ID list |
-| branch_count | int | E(n): times this node was chosen as branch origin |
+| variant | str | 该阶段产物的 FLOW_VARIANT（分支复制时使用） |
+| params | dict | **仅本阶段**的参数 {name: value} |
+| stage_qor | dict\|None | 本阶段执行后的中间 QoR 快照 |
+| parent_id | str\|None | 父节点 node_id（root 为 None） |
+| children_ids | list[str] | 子节点 ID 列表 |
+| branch_count | int | E(n)：该节点被选为分支起点的次数 |
 
-**Key methods**:
-- `branchable_nodes(max_branch_count)` — branchable nodes (non-root, non-RT leaf, E(n) < max)
-- `ancestors(node_id)` — root→…→parent chain (excluding self), for obtaining Bef QoR
-- `get_params_chain(node_id)` — aggregate per-stage params along the path {stage: params}
-- `get_path_qor_summary(node_id)` — intermediate ws along the path per stage
-- `add_path(iteration, parent_id, stages_chain)` — mount a new node chain along parent
+**关键方法**：
+- `branchable_nodes(max_branch_count)` — 可分支节点（非 root、非 RT 叶子、E(n) < max）
+- `ancestors(node_id)` — root→…→parent 链（不含自身），用于获取 Bef QoR
+- `get_params_chain(node_id)` — 路径上各阶段参数汇总 {stage: params}
+- `get_path_qor_summary(node_id)` — 路径上各阶段中间 ws
+- `add_path(iteration, parent_id, stages_chain)` — 沿父节点挂载新节点链
 - `increment_branch_count(node_id)` — E(n) += 1
-- `to_dict()` / `from_dict()` — JSON serialization
+- `to_dict()` / `from_dict()` — JSON 序列化
 
-### History Records H — maintained by `optimizer.py`
+### 历史记录 H — `optimizer.py` 维护
 
-A flat log `List[Dict]` kept alongside the tree. Entry structure (constructed by
-`Optimizer._record()`):
+与树并行的平面日志 `List[Dict]`，每条记录结构（构造于 `Optimizer._record()`）：
 
 ```jsonc
 {
   "iteration": 1,
   "status": "ok",                         // "ok" | "failed"
   "variant": "agenticpd_iter1",
-  "params": {                             // full four-stage params (Bef inherited + downstream generated)
+  "params": {                             // 完整四阶段参数（Bef 继承 + 下游新生成）
     "FP":  {"CORE_UTILIZATION": 35, "CORE_ASPECT_RATIO": 0.85},
     "PL":  {"PLACE_DENSITY_LB_ADDON": 0.08, "CELL_PAD_IN_SITES_GLOBAL_PLACEMENT": 0},
     "CTS": {"CTS_CLUSTER_SIZE": 86, "CTS_CLUSTER_DIAMETER": 172, "SETUP_SLACK_MARGIN": 0.0},
     "RT":  {"FASTROUTE_LAYER_ADJUSTMENT": 0.18, "GRT_CONGESTION_ITERATIONS": 26}
   },
   "qor": {"wns_ps": -1343.18, "tns_ps": -60770.1, "area_um2": 5053.6, "power_w": 0.00868},
-  "stage_qor": {                          // intermediate timing (ps) after each stage
+  "stage_qor": {                          // 各阶段执行后的中间时序（ps）
     "FP": {"2_1_floorplan_ws_ps": -1154.1, "2_1_floorplan_tns_ps": -48237.9},
     "PL": {"3_5_place_dp_ws_ps": -1579.2}
   },
-  "failed_stage": null,                   // crash stage name on failure
-  "error": null,                          // error summary on failure
+  "failed_stage": null,                   // 失败时记录崩溃阶段名
+  "error": null,                          // 失败时记录错误摘要
   "elapsed_s": 151.4,
-  "branch_node": "iter0_FP",              // branch origin node (null for baseline)
-  "branch_stage": "PL",                   // re-run start stage b_k (null for baseline)
-  "judge_decision": {                     // full Judge decision (null for baseline)
+  "branch_node": "iter0_FP",              // 分支起点节点（基线轮为 null）
+  "branch_stage": "PL",                   // 重跑起始阶段 b_k（基线轮为 null）
+  "judge_decision": {                     // 法官完整决策（基线轮为 null）
     "branch_node": "iter0_FP",
     "branch_stage": "PL",
-    "hints": {"FP": "", "PL": "Lower addon", "CTS": "Shrink cluster", "RT": "Maintain"},
-    "reason": "PL has largest bottleneck score"
+    "hints": {"FP": "", "PL": "降低 addon", "CTS": "缩小 cluster", "RT": "保持"},
+    "reason": "PL 瓶颈分最大"
   },
-  "stage_reasons": {                      // per-stage parameter rationale
-    "PL": "Lowered addon per hint", "CTS": "…", "RT": "…"
+  "stage_reasons": {                      // 下游各阶段智能体的调参理由
+    "PL": "按 hint 降低 addon", "CTS": "…", "RT": "…"
   }
 }
 ```
 
-tree.json and history.json are atomically persisted by `Optimizer._persist()` at
-the end of each round (write to `.tmp` then `os.replace` — a mid-write crash won't
-corrupt the old file). Tree nodes are only mounted on successful iterations (failed
-rounds produce incomplete artifacts and cannot serve as future branch origins).
+tree.json 与 history.json 每轮结束后由 `Optimizer._persist()` 同时原子落盘
+（先写 `.tmp` 再 `os.replace`，中途崩溃不会损坏旧文件）。
+树节点仅在迭代成功时挂载（失败轮产物不完整、不可作为未来分支起点）。
 
 ---
 
-## Detailed Data Flow: Information Carriers Per Iteration
+## 数据流详解：每轮迭代中各智能体的信息载体
 
-### 0. Observation Tool (paper §4.2) — `agents.py`
+### 0. Observation Tool（论文 §4.2）— `agents.py`
 
-**Does not call LLM; pure computation.**
+**不调 LLM，纯计算。**
 
 - `compute_exploration_balance(tree, max_branch_count)` → `dict[str, int]`
-  Iterates `branchable_nodes()`, returns {node_id: branch_count} (the E(n) table)
+  遍历 `branchable_nodes()`，返回 {node_id: branch_count}（即 E(n) 表）
 - `compute_stage_bottleneck(history, best_qor)` → `dict[str, float]`
-  Extracts the best intermediate ws for each stage from all ok rounds in history,
-  computes `best_ws - stage_best_ws` (larger positive = more bottlenecked)
+  从历史中各阶段 ok 轮提取所有中间 ws 的最佳值，计算 `best_ws - stage_best_ws`
+  （正值越大 = 该阶段越是瓶颈）
 - `build_observation_summary(tree, history, best_qor, max_branch_count)` → `str`
-  Assembles a Markdown table block as the "search state summary" section of the
-  Judge's user prompt
+  组装为 Markdown 表格文本块，作为 Judge user prompt 的"搜索状态概要"段
 
-Verifiable: use `--log-level DEBUG` and inspect the first section of the user
-prompt in agenticpd.log.
+可验证：`--log-level DEBUG` 后查看 agenticpd.log 中 user prompt 首段。
 
-### 1. Judge Input and Output (paper §4) — `agents.py::JudgeAgent`
+### 1. Judge 的输入与输出（论文 §4）— `agents.py::JudgeAgent`
 
-**system prompt** (`JudgeAgent.system_prompt()`, identical every round):
-Role definition + QoR priority/tolerances + four-stage parameter description table
-(rendered from `config.PARAM_SPACE`) + branching mechanism explanation (tree, E(n)/B(s)
-semantics, branch_node/branch_stage consistency constraint) + decision principles.
+**system prompt**（`JudgeAgent.system_prompt()`，每轮相同）：
+角色定义 + QoR 优先级/容差 + 四个阶段参数说明表（从 `config.PARAM_SPACE` 渲染）+
+分支机制说明（树、E(n)/B(s) 含义、branch_node 与 branch_stage 一致性约束）+ 决策原则。
 
-**user prompt** (`JudgeAgent.build_user_prompt()`, rebuilt every round) — four parts:
-1. Observation summary (output of `build_observation_summary()`)
-2. Current best details (QoR + full params)
-3. Recent history (`format_history()`, 15 entries, with branch info like
-   `#2 [ok, from iter0_FP@PL] …`; failed rounds include params; best marked `*BEST*`)
+**user prompt**（`JudgeAgent.build_user_prompt()`，每轮重建）四部分：
+1. 观测概要（`build_observation_summary()` 输出）
+2. 当前最佳详情（QoR + 完整参数）
+3. 近期历史（`format_history()`，15 条，含分支信息如 `#2 [ok, from iter0_FP@PL] …`，
+   失败轮带参数不省略，最佳标 `*BEST*`）
 4. JSON schema
 
-**Output** (paper D_k = (n_hat, b_k, {hint_s})):
+**输出**（论文 D_k = (n_hat, b_k, {hint_s})）：
 
 ```json
 {"branch_node": "iter0_PL",
  "branch_stage": "CTS",
- "hints": {"FP": "", "PL": "", "CTS": "Shrink cluster to reduce local skew", "RT": "Keep layer capacity 0.2"},
- "reason": "CTS has largest bottleneck score (+95ps), iter0_PL only branched once"}
+ "hints": {"FP": "", "PL": "", "CTS": "缩小 cluster 降低局部 skew", "RT": "保持层容量 0.2"},
+ "reason": "CTS 瓶颈分最大（+95ps），iter0_PL 仅被分支 1 次"}
 ```
 
-- **branch_node**: a node_id from the branchable node table, or `"ROOT"`. The chosen
-  node uniquely determines the re-run start point (consistency correction
-  `b := next_stage(node.stage)` is performed in `Optimizer.run_iteration()`; if the
-  LLM output is inconsistent, it is corrected based on the node with a WARNING log)
-- **branch_stage**: re-run start stage, subject to the consistency constraint
-- **hints**: dedicated hints for each stage in {b}∪Aft(b); Bef stage hints ignored
-- **Robustness**: invalid stage/node_id triggers one retry; if LLM completely fails,
-  degrades to "ROOT + round-robin stage + fallback hints" (ERROR log visible)
+- **branch_node**：可分支节点表中的 node_id，或 `"ROOT"`。选哪个节点唯一决定重跑起点
+  （一致性修正 `b := next_stage(node.stage)` 在 `Optimizer.run_iteration()` 中执行，
+  若 LLM 输出不一致以 node 为准修正，WARNING 日志可见）
+- **branch_stage**：重跑起始阶段，受一致性约束
+- **hints**：为 {b}∪Aft(b) 各阶段专属提示；Bef 阶段的 hint 被忽略
+- **健壮性**：非法 stage/node_id 时重问一次；LLM 彻底失败退化为
+  "ROOT + 轮询选阶段 + 兜底 hints"（ERROR 日志可见）
 
-**Verifiable code**:
-- Observation summary `agents.py::build_observation_summary()` / `compute_stage_bottleneck()` / `compute_exploration_balance()`
-- Prompt `agents.py::JudgeAgent.system_prompt()` / `build_user_prompt()`
-- Output validation + fallback `agents.py::JudgeAgent.validate()` / `act()`
-- Consistency correction / ROOT fallback `optimizer.py::Optimizer.run_iteration()` steps 5–6
+**可验证代码**：
+- 观测概要 `agents.py::build_observation_summary()` / `compute_stage_bottleneck()` / `compute_exploration_balance()`
+- prompt `agents.py::JudgeAgent.system_prompt()` / `build_user_prompt()`
+- 输出校验与兜底 `agents.py::JudgeAgent.validate()` / `act()`
+- 一致性修正 / ROOT 回退 `optimizer.py::Optimizer.run_iteration()` 步骤 5-6
 
-### 2. StageAgent Input and Output (paper §5) — `agents.py::StageAgent`
+### 2. StageAgent 的输入与输出（论文 §5）— `agents.py::StageAgent`
 
-**Only agents for s ∈ {b} ∪ Aft(b) are invoked** — Bef stage params are inherited
-from tree ancestors, corresponding to paper §3.2 "zero-cost reuse".
+**只有 s ∈ {b} ∪ Aft(b) 的智能体被调用**——Bef 阶段参数从树祖先继承，对应论文 §3.2
+的"零成本复用"。
 
-**Context fields** (assembled in `Optimizer.run_iteration()` step 7,
-corresponding to ctx_s = ({Q_k(i)}_{i∈Bef(s)}, e_s, hint_s)):
+**context 字段**（`Optimizer.run_iteration()` 步骤 7 组装，
+对应 ctx_s = ({Q_k(i)}_{i∈Bef(s)}, e_s, hint_s)）：
 
-| Field | Paper Symbol | Source |
+| 字段 | 论文符号 | 来源 |
 |---|---|---|
-| upstream_qor | {Q_k(i)}_{i∈Bef(s)} | Tree ancestor stage_qor + branch origin node's own stage_qor |
-| cross_iteration_exp | e_s | `Optimizer._cross_exp(s)`: most recent 5 entries where this stage was branch_stage |
-| hint | hint_s | Judge output `hints[stage]` |
-| global_best | (baseline reference) | `Optimizer.best_entry` |
+| upstream_qor | {Q_k(i)}_{i∈Bef(s)} | 树祖先 stage_qor + 分支节点自身 stage_qor |
+| cross_iteration_exp | e_s | `Optimizer._cross_exp(s)`：本阶段作为 branch_stage 的最近 5 条 |
+| hint | hint_s | Judge 输出 `hints[stage]` |
+| global_best | （基线参考） | `Optimizer.best_entry` |
 
-**user prompt** (`StageAgent.build_user_prompt()`) — four parts:
-1. Completed Bef stage QoR in this branch (ws/tns per stage), with explicit note
-   that "these stages will NOT be re-run"
-2. Cross-iteration experience e_s (params + intermediate ws for this stage)
-3. Global best (QoR + this stage's params in the best round, as conservative reference)
-4. Judge's dedicated hint
+**user prompt**（`StageAgent.build_user_prompt()`）四部分：
+1. 本分支 Bef 阶段已完成的 QoR（ws/tns per stage），明确告知"这些阶段不会重跑"
+2. 跨迭代经验 e_s（params + 该阶段中间 ws）
+3. 全局最佳（QoR + 本阶段在最佳轮的参数，作为保守参考基线）
+4. 法官专属 hint
 
-**Output**:
+**输出**：
 
 ```json
 {"params": {"CTS_CLUSTER_SIZE": 60, "CTS_CLUSTER_DIAMETER": 120, "SETUP_SLACK_MARGIN": 0.05},
- "reason": "Shrunk cluster per hint to reduce skew"}
+ "reason": "按 hint 缩小 cluster 降 skew"}
 ```
 
-Triple-clean (`validate()`): discard unknown keys → `ParamSpec.cast()` type coercion
-+ clamp → missing keys filled from global best → defaults. Complete LLM failure →
-entire set falls back to defaults; main loop does not abort.
+三重清洗（`validate()`）：丢弃未知键 → `ParamSpec.cast()` 类型强转 + clamp →
+缺键用全局最佳→默认值兜底补齐。LLM 彻底失败整组走兜底，主循环不中断。
 
-**Verifiable code**:
-- Downstream stage filtering `optimizer.py::_downstream_stages()`
-- Bef param/QoR inheritance `optimization_tree.py::get_params_chain()` / `ancestors()`
-- Cross-iteration experience `optimizer.py::Optimizer._cross_exp()`
-- Prompt rendering `agents.py::StageAgent.build_user_prompt()`
-- Output cleaning `agents.py::StageAgent.validate()` / `_fallback_params()`
+**可验证代码**：
+- 下游阶段筛选 `optimizer.py::_downstream_stages()`
+- Bef 参数/QoR 继承 `optimization_tree.py::get_params_chain()` / `ancestors()`
+- 跨迭代经验 `optimizer.py::Optimizer._cross_exp()`
+- prompt 渲染 `agents.py::StageAgent.build_user_prompt()`
+- 输出清洗 `agents.py::StageAgent.validate()` / `_fallback_params()`
 
-### 3. Information Flow Overview (One Iteration, Line-by-Line with Paper §6 Pseudocode)
+### 3. 信息流总览（一轮迭代，与论文 §6 伪代码逐行对照）
 
 ```
-tree.json + history.json (maintained by Optimizer, atomically persisted each round)
+tree.json + history.json（Optimizer 维护，每轮结束原子落盘）
    │
-   ├─→ ObservationTool (pure computation):
+   ├─→ ObservationTool（纯计算）：
    │     E(n) ← tree.branchable_nodes()     B(s) ← compute_stage_bottleneck()
-   │     ──→ build_observation_summary() → observation summary (Markdown tables)
+   │     ──→ build_observation_summary() → 观测概要（Markdown 表格）
    │
-   ├─→ Judge:
-   │     system(role+param table+branching rules) + user(summary+best detail+history 15)
+   ├─→ Judge：
+   │     system(角色+参数表+分支规则) + user(观测概要+最佳详情+历史15条)
    │     ──→ {branch_node: n_hat, branch_stage: b, hints: {s: text}}
-   │           │ (Optimizer does consistency correction: b := next_stage(n_hat.stage))
-   │           │ (n_hat not in tree → fallback ROOT; n_hat is leaf → fallback ROOT+FP)
+   │           │（Optimizer 做一致性修正：b := next_stage(n_hat.stage)）
+   │           │（n_hat 不在树中 → 回退 ROOT；n_hat 是叶子 → 回退 ROOT+FP）
    │           ▼
-   ├─→ Bef stages (s before b):
-   │     params ← tree.get_params_chain(n_hat)     QoR ← ancestors(n_hat) + [n_hat]
-   │     <no LLM call, no EDA re-run>
+   ├─→ Bef 阶段（s 在 b 之前）：
+   │     参数 ← tree.get_params_chain(n_hat)     QoR ← ancestors(n_hat) + [n_hat]
+   │     <不调 LLM，不重跑 EDA>
    │           │
-   ├─→ Downstream stages s ∈ {b} ∪ Aft(b), per-stage pipeline:
-   │     ctx = upstream_qor(inherited) + cross_iteration_exp(s) + hints[s] + global_best
-   │     ──→ StageAgent → {params, reason} → ORFSRunner.run_stage(s, …) → real stage QoR
-   │     (next StageAgent sees the previous stage's real QoR via live_upstream_qor)
+   ├─→ 下游阶段 s ∈ {b} ∪ Aft(b)，逐阶段流水线：
+   │     ctx = upstream_qor(继承) + cross_iteration_exp(s) + hints[s] + global_best
+   │     ──→ StageAgent → {params, reason} → ORFSRunner.run_stage(s, …) → 真实阶段 QoR
+   │     （下一个 StageAgent 通过 live_upstream_qor 看到上一阶段的真实 QoR）
    │           │
-   ├─→ After all downstream stages complete:
-   │     ORFSRunner.run_finish() → final QoR (WNS/TNS/Area/Power)
+   ├─→ 所有下游阶段完成后：
+   │     ORFSRunner.run_finish() → 最终 QoR（WNS/TNS/Area/Power）
    │           │
-   └─→ Optimizer records:
-        history append entry + tree.add_path(branch_node → downstream new nodes)
+   └─→ Optimizer 登记：
+        history 追加条目 + tree.add_path(branch_node → 下游新节点)
         + tree.increment_branch_count(branch_node)
-        + qor_is_better check → update best_idx → _persist() atomic write
+        + qor_is_better 判断 → 更新 best_idx → _persist() 原子落盘
 ```
 
-## Branch Execution Implementation Details — `orfs_interface.py`
+## 分支执行实现细节 — `orfs_interface.py`
 
-How the per-stage pipeline executes:
+逐阶段流水线的执行方式：
 
-1. **Establish baseline**: from ROOT branch → wipe variant; otherwise
-   `copy_parent_results()` copies parent variant's results/objects/logs/reports
-   four directories to the new variant.
-2. **Per-stage loop**: for each s ∈ {b} ∪ Aft(b):
-   - StageAgent generates params (having already seen real QoR from earlier stages
-     in the pipeline)
-   - `run_stage(s, …)`: `make clean_<s>` → `make <s_target>` → parse stage QoR
-   - Stage QoR appended to live_upstream_qor for the next StageAgent
-3. **Finish**: `run_finish()` executes `make finish` and parses final four-metric QoR
+1. **建立基线**：从 ROOT 分支则清空 variant；否则 `copy_parent_results()` 复制父
+   variant 的 results/objects/logs/reports 四目录到新 variant。
+2. **逐阶段循环**：对每个 s ∈ {b} ∪ Aft(b)：
+   - StageAgent 生成参数（已看到流水线中先前阶段的实际 QoR）
+   - `run_stage(s, …)`：`make clean_<s>` → `make <s_target>` → 解析阶段 QoR
+   - 阶段 QoR 追加到 live_upstream_qor 供下一个 StageAgent 使用
+3. **收尾**：`run_finish()` 执行 `make finish` 并解析最终四指标 QoR
 
-The old `branch_from()` interface (single `make all` with targeted clean) is kept
-as a fallback, but the per-stage pipeline is the default path in
-`Optimizer.run_iteration()`.
+旧的 `branch_from()` 接口（一次 `make all` 加定点 clean）保留作为备用，但逐阶段
+流水线是 `Optimizer.run_iteration()` 的默认路径。
 
-**Known constraint**: `SETUP_SLACK_MARGIN` simultaneously affects repair_timing in
-FP/CTS/GRT. When branching re-runs downstream stages, the current round's value takes
-effect — while upstream solidified artifacts still carry the old value from the
-branch point. This is an inherent approximation of the stage partitioning (the paper
-has the same issue).
+**已知约束**：`SETUP_SLACK_MARGIN` 同时影响 FP/CTS/GRT 的 repair_timing。
+分支重跑下游时以本轮新值生效——上游固化产物中仍是分支前的旧值，这是阶段划分近似
+的固有误差（论文同样存在）。
 
 ---
 
-## Configuration Reference — `config.py`
+## 配置说明 — `config.py`
 
-`FrameworkConfig` (dataclass) is the single configuration entry point. Key fields:
+`FrameworkConfig`（dataclass）是框架唯一配置入口，关键字段：
 
-| Field | Default | Description |
+| 字段 | 默认值 | 说明 |
 |---|---|---|
-| platform / design | sky130hd / ibex | Target design; overridable via CLI `--platform` `--design` |
-| flow_dir | derived from `__file__` | ORFS root directory |
-| run_dir | auto-created per run | `agenticpd/runs/<timestamp>/` |
+| platform / design | sky130hd / ibex | 目标设计；CLI `--platform` `--design` 可覆盖 |
+| flow_dir | 由 `__file__` 推导 | ORFS 根目录 |
+| run_dir | 每次运行自动创建 | `agenticpd/runs/<时间戳>/` |
 | make_target | all | synth→floorplan→place→cts→route→finish |
-| timeout_s | 3600 | Single-round timeout (seconds) |
-| iterations | 10 | Number of optimization iterations (excluding baseline) |
-| history_window | 15 | History window size fed to Judge |
-| max_branch_count | 3 | Max branch count per node; exceeded nodes excluded from branchable_nodes |
-| variant_prefix | agenticpd_iter | FLOW_VARIANT prefix per iteration |
-| best_variant_name | agenticpd_best | Best export directory name |
-| wns_tol_ps / tns_tol_ps | 10 / 50 | QoR comparison tolerances (ps) |
-| llm_model | deepseek-v4-pro | LLM model ID |
-| llm_temperature | 0.6 | LLM temperature parameter |
+| timeout_s | 3600 | 单轮超时（秒） |
+| iterations | 10 | 优化迭代次数（不含基线） |
+| history_window | 15 | 喂给 Judge 的历史窗口大小 |
+| max_branch_count | 3 | 单节点最大分支次数，超限从 branchable_nodes 排除 |
+| variant_prefix | agenticpd_iter | 每轮 FLOW_VARIANT 前缀 |
+| best_variant_name | agenticpd_best | 最佳导出目录名 |
+| wns_tol_ps / tns_tol_ps | 10 / 50 | QoR 比较容差（ps） |
+| llm_model | deepseek-v4-pro | LLM 模型 ID |
+| llm_temperature | 0.6 | LLM 温度参数 |
 
-Global constants (derived from `__file__`, uniformly referenced by all modules):
-- `FLOW_DIR` — ORFS root directory
+全局常量（由 `__file__` 推导，各模块统一引用）：
+- `FLOW_DIR` — ORFS 根目录
 - `AGENTICPD_DIR` — `flow/agenticpd/`
-- `RUNS_DIR` — `flow/agenticpd/runs/` (name configurable via `RUNS_DIR_NAME`)
+- `RUNS_DIR` — `flow/agenticpd/runs/`（目录名可通过 `RUNS_DIR_NAME` 配置）
 - `ENV_FILENAME` — `.env`
 - `ORFS_CATEGORIES` — `["results", "logs", "reports", "objects"]`
 
-CLI arguments (`--iterations`, `--design`, `--platform`, `--timeout`, `--wns-tol`,
-`--tns-tol`) all default to `None` (argparse) — only override config.py defaults
-when explicitly passed by the user.
+CLI 参数（`--iterations`、`--design`、`--platform`、`--timeout`、`--wns-tol`、
+`--tns-tol`）默认值均为 `None`（argparse），只有用户显式传参时才覆盖 config.py。
 
 ---
 
-## QoR Comparator — `utils.py::qor_is_better()`
+## QoR 比较器 — `utils.py::qor_is_better()`
 
-Paper §6 line 13: "candidate beats historical best" check. Both sides must have
-complete QoR (failed/incomplete always loses):
+论文 §6 第 13 行的"候选优于历史最优"判断。双方均需完整 QoR（失败/不完整恒输）：
 
-1. Both WNS >= 0 (both converged) → excess positive margin has no value, skip to step 3
-2. |ΔWNS| > wns_tol_ps → larger WNS wins; else |ΔTNS| > tns_tol_ps → larger TNS wins
-3. Lower power wins; if still tied, lower area wins; exact tie → not better
-   (conservative, keep old best)
+1. 双方 WNS >= 0（均收敛）→ 多余正裕量无价值，跳步骤 3
+2. |ΔWNS| > wns_tol_ps → WNS 大者胜；否则 |ΔTNS| > tns_tol_ps → TNS 大者胜
+3. 功耗小者胜；仍平则面积小者胜；完全打平判不优（保守保留旧最佳）
 
 ---
 
-## Tree Visualization — `visualize_tree.py`
+## 树可视化 — `visualize_tree.py`
 
-Auto-invoked after `main.py` finishes; generates `optimization_tree.png` in run_dir.
+`main.py` 运行结束后自动调用，在 run_dir 下生成 `optimization_tree.png`。
 
-Effects:
-- 5-layer layout (root → FP → PL → CTS → RT), nodes within layer sorted left-to-right
-  by iteration number
-- Circle nodes labeled `iteration_stage` (e.g. `0_FP`, `2_CTS`); root labeled `Root`
-- **Thick green arrows**: baseline path (root→iter0_FP→iter0_PL→iter0_CTS→iter0_RT)
-- **Thick red arrows**: best path (QoR-best iteration auto-detected from history.json,
-  full path traced back)
-- Thin gray arrows: all other edges
-- When best coincides with baseline, green arrows are skipped to avoid overlap;
-  legend shows `= baseline`
-- Image dimensions auto-scale with node count, 150 DPI
+效果：
+- 5 层布局（root → FP → PL → CTS → RT），层内按迭代号左小右大排列
+- 圆圈节点，标注 `迭代号_阶段`（如 `0_FP`、`2_CTS`）、root 标注 `Root`
+- **绿色粗箭头**：基线路径（root→iter0_FP→iter0_PL→iter0_CTS→iter0_RT）
+- **红色粗箭头**：最佳路径（从 history.json QoR 自动找出最优迭代，回溯整条路径）
+- 灰色细箭头：其余普通边
+- 最佳与基线重合时自动跳过绿色避免重叠，图例标注 `= baseline`
+- 图片尺寸随节点数动态调整，150 DPI
 
 ```bash
-# Also usable standalone
+# 也可独立运行
 python3 agenticpd/visualize_tree.py runs/20260718_210019
 ```
 
-## Artifact Cleanup — `clean.py`
+## 产物清理 — `clean.py`
 
-Deletes all AgenticPD artifacts for a given platform/design; base baseline is
-strictly protected:
+删除指定 platform/design 的所有 AgenticPD 产物，base 基线严加保护：
 
 ```bash
-python3 agenticpd/clean.py --target nangate45 gcd --dry-run   # Preview
-python3 agenticpd/clean.py --target nangate45 gcd             # Interactive confirmation
-python3 agenticpd/clean.py --target nangate45 gcd --yes       # Skip confirmation
-python3 agenticpd/clean.py nangate45 gcd                      # Positional args equivalent
+python3 agenticpd/clean.py --target nangate45 gcd --dry-run   # 预览
+python3 agenticpd/clean.py --target nangate45 gcd             # 交互确认
+python3 agenticpd/clean.py --target nangate45 gcd --yes       # 跳过确认
+python3 agenticpd/clean.py nangate45 gcd                      # 位置参数等效
 ```
 
-Cleanup scope: `results/` `logs/` `reports/` `objects/` (all variants except base) +
-matching `agenticpd/runs/` directories (matched via each run's `config_snapshot.json`).
+清理范围：`results/` `logs/` `reports/` `objects/`（base 以外的所有 variant）+
+匹配的 `agenticpd/runs/` 目录（通过各 run 的 `config_snapshot.json` 匹配）。
 
 ---
 
-## Fault Fallback Matrix
+## 故障兜底矩阵
 
-| Fault | Behavior |
+| 故障 | 行为 |
 |---|---|
-| ORFS make non-zero exit / timeout | `detect_failed_stage` locates crash stage; history records FAILED entry (params preserved); continue to next round |
-| 6_report.json missing but exit 0 | rpt regex fallback; if still missing, treated as failed |
-| LLM API error (429/5xx/timeout) | Exponential backoff retry ×3 → Judge degrades to ROOT+round-robin, Stage reuses best params |
-| LLM output non-JSON / invalid fields | Feedback retry ×3 → same fallback as above |
-| Judge branch_node not in tree | Optimizer falls back to ROOT (WARNING) |
-| Judge branch_stage inconsistent with node | Optimizer forcibly corrects based on node (WARNING) |
-| Ctrl-C / crash | history+tree already atomically persisted each round; best is exported in finally block |
-| history/tree JSON corrupted (--resume) | Rename to .corrupt, warn, and rebuild |
+| ORFS make 非零退出 / 超时 | `detect_failed_stage` 定位；history 记 FAILED 条目（参数保留）；继续下轮 |
+| 6_report.json 缺失但退出 0 | rpt 正则兜底；仍缺按 failed 处理 |
+| LLM API 错误（429/5xx/超时） | 指数退避重试 ×3 → Judge 退化为 ROOT+轮询、Stage 复用最优参数 |
+| LLM 输出非 JSON / 字段非法 | 回喂错误重问 ×3 → 同上兜底 |
+| Judge branch_node 不在树中 | Optimizer 回退 ROOT（WARNING） |
+| Judge branch_stage 与 node 不一致 | Optimizer 以 node 为准强制修正（WARNING） |
+| Ctrl-C / 崩溃 | history+tree 每轮已原子落盘；finally 中导出当前最佳 |
+| history/tree JSON 损坏 (--resume) | 改名 .corrupt，警告后重建 |
 
 ---
+
+## 已知问题
+
+### 1. WSL pyc 缓存同步延迟
+
+Windows 通过 `\\wsl.localhost` UNC 路径 Edit `.py` 文件后，WSL 侧已有 `.pyc`
+mtime 可能比新 `.py` 更新（9p 同步延迟），Python 会加载旧 bytecode。
+**每次 Edit 后必须先清 pycache**：
+```bash
+rm -rf flow/agenticpd/__pycache__/
+```
+
+### 2. finish__design__instance__area 重复键
+
+`logs/.../6_report.json` 中 `finish__design__instance__area` 出现两次，
+后者是 stdcell-only 面积（正确值）。依赖 CPython `json.load` 后键覆盖取后者。
+见 `utils.py::QoR.from_report_json()`。
+
+### 3. 逐阶段执行与批量生成的近似
+
+论文 §6 第 10 行在每个下游阶段执行后才获得该阶段 QoR 并传给下一个阶段。
+当前实现通过逐阶段流水线（`run_stage()` 后立即将真实 QoR 追加到
+live_upstream_qor）部分缓解了此问题，但当前阶段 StageAgent 的 prompt 中
+仍然不包含同级下游阶段（尚未执行）的 QoR，对同级串行依赖的建模是近似。
