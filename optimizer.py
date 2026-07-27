@@ -140,11 +140,17 @@ class Optimizer:
             t.failure = failure
         if error_message:
             t.error_message = error_message
-        # Compute param_diff
-        if current_params and self._parent_params:
+        # Compute param_diff: only if there is a parent trial AND params actually changed.
+        # Load parent's full params from its TrialRecord, not just inherited Bef-stage params.
+        parent_params = None
+        if self._parent_trial_id:
+            parent_trial = self.trial_mgr.get(self._parent_trial_id)
+            if parent_trial and parent_trial.params:
+                parent_params = parent_trial.params
+        if parent_params and current_params:
             diff = {}
             for stage in config.STAGES:
-                old = self._parent_params.get(stage, {})
+                old = parent_params.get(stage, {})
                 new = current_params.get(stage, {})
                 all_names = set(old.keys()) | set(new.keys())
                 for name in sorted(all_names):
