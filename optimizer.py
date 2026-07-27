@@ -313,26 +313,26 @@ class Optimizer:
 
         # ---- cache miss: run ORFS ----
         log.info("========== Iter #0 (Baseline, full run from ROOT) ==========")
-        # Record trial (no trial_id reuse across sessions)
-        self._begin_trial(0)
         result = self.runner.run_flow(stage_params, variant, 0)
         if result.ok:
             chain = [(s, variant, stage_params.get(s, {}),
                       result.stage_qor.get(s)) for s in config.STAGES]
             self._add_to_tree(0, ROOT_ID, chain)
         self._record(0, stage_params, result, judge_decision=None)
-        self._finalize_trial(
-            status="ok" if result.ok else "failed",
-            final_qor=result.qor,
-            failure=FailureClass.TOOL_CRASH if not result.ok else None,
-            error_message=result.error,
-            current_params=stage_params,
-        )
-        # Save to cache for future sessions
-        if result.ok and cache_dir and self._current_trial:
+        # Build a TrialRecord for the shared cache only — no session-local
+        # iter-0-* directory (the cache is the single source of truth).
+        if result.ok and cache_dir:
+            from schemas.trial import _new_trial_id
+            trial = TrialRecord(
+                trial_id=_new_trial_id(),
+                experiment_id="agenticpd-gcd",
+                status="ok",
+                params=stage_params,
+                final_qor=result.qor.to_dict() if result.qor else None,
+            )
             cache_dir.mkdir(parents=True, exist_ok=True)
             (cache_dir / "trial.json").write_text(
-                json.dumps(self._current_trial.to_dict(), ensure_ascii=False, indent=2),
+                json.dumps(trial.to_dict(), ensure_ascii=False, indent=2),
                 encoding="utf-8")
             log.info("[OPTIMIZER] Baseline cached to %s", cache_dir)
         if not result.ok:
