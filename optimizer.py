@@ -22,6 +22,8 @@ from config import FrameworkConfig
 from optimization_tree import (OptimizationTree, ROOT_ID,
                                load_tree, save_tree_atomic)
 from orfs_interface import ORFSRunner, RunResult
+from trial_manager import TrialManager
+from schemas.trial import TrialRecord, StageResult, FailureClass
 from utils import QoR, load_history, qor_is_better, save_history_atomic
 
 log = logging.getLogger("optimizer")
@@ -72,6 +74,11 @@ class Optimizer:
         self.history: List[Dict[str, Any]] = []
         self.best_idx: Optional[int] = None
 
+        # Stage C6: TrialManager for structured trial recording
+        self.trial_mgr = TrialManager(cfg.run_dir.parent if cfg.run_dir else Path("runs"))
+        self._current_trial: Optional[TrialRecord] = None
+        self._parent_trial_id: Optional[str] = None
+
     # ------------------------------------------------------------------
     @property
     def best_entry(self) -> Optional[Dict[str, Any]]:
@@ -90,6 +97,66 @@ class Optimizer:
             if qor_is_better(qor, self._best_qor(),
                              self.cfg.wns_tol_ps, self.cfg.tns_tol_ps):
                 self.best_idx = idx
+
+    # ------------------------------------------------------------------
+    # Stage C6: TrialManager integration helpers
+    # ------------------------------------------------------------------
+
+    def _begin_trial(self, iteration: int, parent_trial_id: Optional[str] = None,
+                     branch_stage: Optional[str] = None,
+                     parent_params: Optional[dict] = None) -> TrialRecord:
+        """Create a TrialRecord and persist a 'running' entry before flow start."""
+        trial = self.trial_mgr.create(
+            experiment_id="agenticpd-gcd",
+            parent_trial_id=parent_trial_id,
+            branch_stage=branch_stage,
+        )
+        # Compute param_diff against parent (if available)
+        self._current_trial = trial
+        self._parent_trial_id = parent_trial_id
+        self._parent_params = parent_params
+        log.debug("[OPTIMIZER] Trial %s started (parent=%s, branch=%s)",
+                  trial.trial_id, parent_trial_id, branch_stage)
+        return trial
+
+    def _add_stage_result(self, stage_result: StageResult) -> None:
+        """Record a single stage result in the current trial."""
+        if self._current_trial is None:
+            return
+        self._current_trial.stage_results.append(stage_result)
+
+    def _finalize_trial(self, status: str, final_qor: Optional[QoR] = None,
+                        failure: Optional[FailureClass] = None,
+                        error_message: Optional[str] = None,
+                        current_params: Optional[dict] = None) -> None:
+        """Persist the completed trial to disk."""
+        if self._current_trial is None:
+            return
+        t = self._current_trial
+        t.status = status
+        if final_qor:
+            t.final_qor = final_qor.to_dict() if hasattr(final_qor, 'to_dict') else final_qor
+        if failure:
+            t.failure = failure
+        if error_message:
+            t.error_message = error_message
+        # Compute param_diff
+        if current_params and self._parent_params:
+            diff = {}
+            for stage in config.STAGES:
+                old = self._parent_params.get(stage, {})
+                new = current_params.get(stage, {})
+                all_names = set(old.keys()) | set(new.keys())
+                for name in sorted(all_names):
+                    ov = old.get(name)
+                    nv = new.get(name)
+                    if ov != nv:
+                        diff[name] = {"from": ov, "to": nv}
+            if diff:
+                t.param_diff = diff
+        self.trial_mgr.update(t)
+        log.info("[OPTIMIZER] Trial %s finalized: status=%s elapsed=%.1fs",
+                 t.trial_id, t.status, t.elapsed_s)
 
     # ------------------------------------------------------------------
     def _cross_exp(self, stage: str, window: int = 5) -> List[Dict[str, Any]]:
@@ -155,6 +222,10 @@ class Optimizer:
         stage_params = {s: dict(config.BASELINE_PARAMS.get(s, {}))
                         for s in config.STAGES}
         variant = self.cfg.variant_name(0)
+
+        # Stage C6: begin trial record
+        self._begin_trial(0)
+
         result = self.runner.run_flow(stage_params, variant, 0)
 
         # 在树中登记：root → FP → PL → CTS → RT
@@ -164,6 +235,16 @@ class Optimizer:
             self._add_to_tree(0, ROOT_ID, chain)
 
         self._record(0, stage_params, result, judge_decision=None)
+
+        # Stage C6: finalize trial
+        self._finalize_trial(
+            status="ok" if result.ok else "failed",
+            final_qor=result.qor,
+            failure=FailureClass.TOOL_CRASH if not result.ok else None,
+            error_message=result.error,
+            current_params=stage_params,
+        )
+
         if not result.ok:
             log.error("#0 [OPTIMIZER] Baseline failed (%s), continuing without reference",
                       result.error)
@@ -255,6 +336,14 @@ class Optimizer:
         new_variant = self.cfg.variant_name(iteration)
         downstream = _downstream_stages(branch_stage)
 
+        # Stage C6: begin trial record for this iteration
+        self._begin_trial(
+            iteration,
+            parent_trial_id=self._current_trial.trial_id if self._current_trial else None,
+            branch_stage=branch_stage,
+            parent_params=inherited_params,
+        )
+
         # 7) 逐阶段流水线：StageAgent 调 LLM → make 单阶段 → 获取真实 QoR →
         #    传递给下一个 StageAgent（论文 §5 的 ctx_s = Q_k(i)_{i∈Bef(s)}）
         stage_params = dict(inherited_params)  # Bef 继承
@@ -291,6 +380,9 @@ class Optimizer:
             # b) Execute single stage via make (returns StageResult with elapsed_s)
             stage_result = self.runner.run_stage(
                 s, stage_params, new_variant, iteration)
+
+            # Stage C6: record per-stage result
+            self._add_stage_result(stage_result)
 
             if stage_result.status != "ok":
                 failed_stage = s
@@ -331,6 +423,16 @@ class Optimizer:
 
         # 10) 记录历史
         self._record(iteration, stage_params, result, decision, stage_reasons)
+
+        # Stage C6: finalize trial record
+        self._finalize_trial(
+            status="ok" if result.ok else "failed",
+            final_qor=result.qor,
+            failure=FailureClass.TOOL_CRASH if not result.ok else None,
+            error_message=result.error,
+            current_params=stage_params,
+        )
+
         return result
 
     # ------------------------------------------------------------------
