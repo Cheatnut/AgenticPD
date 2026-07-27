@@ -1,120 +1,119 @@
-# AgenticPD CLI Verification Guide
+# AgenticPD CLI 验证指南
 
-All commands run from `flow/agenticpd/`.  Append `--mock-llm --mock-orfs`
-to avoid API cost and EDA runtime (each command completes in seconds).
+所有命令从 `flow/agenticpd/` 目录运行。加 `--mock-llm --mock-orfs` 即可零 token、零 EDA 秒级完成。
 
 ---
 
-## Quick verification loop (8 commands)
+## 快速验证闭环（8 条命令）
 
 ```bash
-# 1. Full mock optimization (3 iterations)
+# 1. 全 mock 优化，3 轮迭代
 python3 ./main.py --mock-llm --mock-orfs --design gcd --iterations 3
 
-# 2. List trials in the latest session
+# 2. 列出最新会话的所有 trial
 python3 tools/trial_inspect.py --list \
   --runs-dir runs/sky130hd_gcd/$(ls -t runs/sky130hd_gcd/ | head -1)
 
-# 3. Inspect one trial in detail
+# 3. 查看某个 trial 的完整细节（含 per-stage）
 python3 tools/trial_inspect.py <trial-id> --stages \
   --runs-dir runs/sky130hd_gcd/$(ls -t runs/sky130hd_gcd/ | head -1)
 
-# 4. Preview cleanup (dry-run — nothing deleted)
+# 4. 预览清理范围（--dry-run，不删任何东西）
 python3 tools/clean.py sky130hd gcd --dry-run
 
-# 5. Generate optimization tree PNG
+# 5. 生成优化树可视化 PNG
 python3 tools/visualize.py runs/sky130hd_gcd/$(ls -t runs/sky130hd_gcd/ | head -1)
 
-# 6. Run again — verify baseline cache hit
+# 6. 再跑一次——验证基线缓存命中
 python3 ./main.py --mock-llm --mock-orfs --design gcd --iterations 2
 
-# 7. List reproducible trials
+# 7. 列出可复现的 trial
 python3 tools/trial_reproduce.py \
   --runs-dir runs/sky130hd_gcd/$(ls -t runs/sky130hd_gcd/ | head -1) --list
 
-# 8. Clean up (deletes runs/sky130hd_gcd/ + ORFS variants)
+# 8. 清理（删除 runs/sky130hd_gcd/ 和 ORFS variant 产物）
 python3 tools/clean.py sky130hd gcd --yes
 ```
 
 ---
 
-## Full command reference
+## 完整命令参考
 
-### main.py — Optimisation entry point
+### main.py — 优化入口
 
-| # | Command | What it does | Expected output |
-|---|---------|-------------|-----------------|
-| 1 | `python3 ./main.py --mock-llm --mock-orfs --design gcd --iterations 3` | Full mock optimisation, 3 iters | `Iter #0 (Baseline)` → cached → `Iter #1/2/3` each showing Judge decision + StageAgent params + QoR. Generates PNG. |
-| 2 | `python3 ./main.py --mock-llm --mock-orfs --design gcd --iterations 5 --log-level DEBUG` | Same with DEBUG logging | As above + `agenticpd.log` contains full prompt text (mock decisions visible). |
-| 3 | `python3 ./main.py --mock-llm --mock-orfs --design gcd --baseline-only` | Baseline only, no LLM | `Iter #0 (Baseline)` → cached to `.baseline/` → exit. Zero LLM calls. |
-| 4 | `python3 ./main.py --mock-llm --mock-orfs --design gcd --platform nangate45` | Different platform | Output under `runs/nangate45_gcd/` instead of `sky130hd_gcd/`. |
-| 5 | Run twice: `python3 ./main.py --mock-llm --mock-orfs --design gcd --iterations 2` | Baseline cache verification | **1st run:** `Iter #0` + `Baseline cached to`. **2nd run:** `Baseline cache hit (skipping ORFS run)` + starts from `Iter #1`. |
-| 6 | `python3 ./main.py --mock-llm --mock-orfs --design gcd --resume latest` | Resume from latest session | `[OPTIMIZER] --resume: loaded N history entries, M tree nodes` → continues from last iteration. |
+| # | 命令 | 功能 | 预期现象 |
+|---|------|------|---------|
+| 1 | `python3 ./main.py --mock-llm --mock-orfs --design gcd --iterations 3` | 全 mock 优化，3 轮迭代 | `Iter #0 (Baseline)` → 缓存基线 → `Iter #1/2/3`，每轮显示法官决策 + 各阶段参数 + 最终 QoR。生成 PNG。 |
+| 2 | `python3 ./main.py --mock-llm --mock-orfs --design gcd --iterations 5 --log-level DEBUG` | 同上，DEBUG 日志 | 同上 + `agenticpd.log` 包含完整 prompt 文本（虽然是 mock 数据）。 |
+| 3 | `python3 ./main.py --mock-llm --mock-orfs --design gcd --baseline-only` | 只跑基线，不调 LLM | `Iter #0 (Baseline)` → 缓存到 `.baseline/` → 退出。零 LLM 调用。 |
+| 4 | `python3 ./main.py --mock-llm --mock-orfs --design gcd --platform nangate45` | 换平台运行 | 产物落在 `runs/nangate45_gcd/` 而非 `sky130hd_gcd/`。 |
+| 5 | 跑两次：`python3 ./main.py --mock-llm --mock-orfs --design gcd --iterations 2` | 基线缓存验证 | **第一次**：`Iter #0` + `Baseline cached to`。**第二次**：`Baseline cache hit (skipping ORFS run)` + 直接从 `Iter #1` 开始。 |
+| 6 | `python3 ./main.py --mock-llm --mock-orfs --design gcd --resume latest` | 从最新会话断点续跑 | `[OPTIMIZER] --resume: loaded N history entries` → 接着上次迭代号继续。 |
 
-### tools/trial_inspect.py — Trial viewer
+### tools/trial_inspect.py — Trial 查看器
 
-| # | Command | What it does | Expected output |
-|---|---------|-------------|-----------------|
-| 7 | `--list --runs-dir <session>` | List all trials in a session | Table: Trial ID \| Status \| QoR \| Elapsed. Old trials show `[no params]`. |
-| 8 | `<trial_id> --runs-dir <session>` | Single trial detail | Parent lineage / param_diff / elapsed / per-stage summary / QoR. |
-| 9 | `<trial_id> --stages --runs-dir <session>` | Add per-stage breakdown | Above + each stage: status \| elapsed \| intermediate ws. |
-| 10 | `--latest --runs-dir <session>` | Most recent trial | Same as #8 for the latest trial in the session. |
-| 11 | `--failed --runs-dir <session>` | Failed trials only | Only trials with status `failed`. Mock mode produces no failures. |
+| # | 命令 | 功能 | 预期现象 |
+|---|------|------|---------|
+| 7 | `--list --runs-dir <会话目录>` | 列出某次会话的全部 trial | 表格：Trial ID / Status / QoR / Elapsed。旧 trial 显示 `[no params]`。 |
+| 8 | `<trial_id> --runs-dir <会话>` | 查看单个 trial 详情 | 显示 parent lineage / param_diff / elapsed / 各阶段摘要 / QoR。 |
+| 9 | `<trial_id> --stages --runs-dir <会话>` | 加 per-stage 明细 | 以上内容 + 每个阶段的 status / 耗时 / 中间时序值。 |
+| 10 | `--latest --runs-dir <会话>` | 最新 trial | 同上（#8），自动定位到最近一个 trial。 |
+| 11 | `--failed --runs-dir <会话>` | 只看失败的 trial | 只显示 status=failed 的 trial。mock 模式不会产生失败。 |
 
-### tools/trial_reproduce.py — Trial reproduction
+### tools/trial_reproduce.py — Trial 复现
 
-| # | Command | What it does | Expected output |
-|---|---------|-------------|-----------------|
-| 12 | `--runs-dir <session> --list` | List reproducible trials | Trials with full `params` dict. `[no params]` = old trial, cannot reproduce. |
-| 13 | `<trial_id> --runs-dir <session>` | Reproduce (real ORFS) | Extracts params → `run_flow()` → compares original vs. reproduced QoR with delta. **Runs real ORFS — not mock-safe.** |
+| # | 命令 | 功能 | 预期现象 |
+|---|------|------|---------|
+| 12 | `--runs-dir <会话> --list` | 列出可复现的 trial | 显示有完整 `params` 的 trial。`[no params]` = 旧 trial，无法复现。 |
+| 13 | `<trial_id> --runs-dir <会话>` | 用真实 ORFS 复现 | 提取参数 → `run_flow()` → 对比原始/复现 QoR 的 Δ。**⚠ 会真实跑 ORFS，不是 mock。** |
 
-### tools/clean.py — Artifact cleanup
+### tools/clean.py — 产物清理
 
-| # | Command | What it does | Expected output |
-|---|---------|-------------|-----------------|
-| 14 | `sky130hd gcd --dry-run` | Preview what would be deleted | Directory listing with file counts + sizes. `base directory will NOT be affected.` |
-| 15 | `sky130hd gcd --yes` | Delete without confirmation | Deletes all ORFS `agenticpd_iter*` + entire `runs/sky130hd_gcd/`. `base` protected. |
-| 16 | `sky130hd gcd` (no `--yes`) | Interactive delete | Same listing → `Delete N directories? [y/N]` prompt. Default N (safe). |
+| # | 命令 | 功能 | 预期现象 |
+|---|------|------|---------|
+| 14 | `sky130hd gcd --dry-run` | 预览将被删除的内容 | 列出 ORFS 产物目录 + `runs/sky130hd_gcd/` 的文件数/大小。`base directory will NOT be affected.` |
+| 15 | `sky130hd gcd --yes` | 跳过确认直接删除 | 删除所有 `agenticpd_iter*` variant + 整个 `runs/sky130hd_gcd/`。`base` 受保护。 |
+| 16 | `sky130hd gcd`（不加 `--yes`） | 交互式删除 | 同上列表 → 提示 `Delete N directories? [y/N]`。默认 N（安全）。 |
 
-### tools/visualize.py — Tree visualisation
+### tools/visualize.py — 树可视化
 
-| # | Command | What it does | Expected output |
-|---|---------|-------------|-----------------|
-| 17 | `runs/sky130hd_gcd/<session>/` | Generate optimisation tree PNG | `Tree image saved to .../optimization_tree.png`. Green = baseline path, red = best path. |
+| # | 命令 | 功能 | 预期现象 |
+|---|------|------|---------|
+| 17 | `runs/sky130hd_gcd/<会话>/` | 生成优化树 PNG | `Tree image saved to .../optimization_tree.png`。绿色 = 基线路径，红色 = 最优路径。 |
 
-### schemas/trial.py — Data model self-test
+### schemas/trial.py — 数据模型自检
 
-| # | Command | What it does | Expected output |
-|---|---------|-------------|-----------------|
-| 18 | `python3 schemas/trial.py` | Run built-in self-tests | `20/20 passed — ALL OK`. Pure Python, zero dependencies. |
+| # | 命令 | 功能 | 预期现象 |
+|---|------|------|---------|
+| 18 | `python3 schemas/trial.py` | 运行内置自测 | `20/20 passed — ALL OK`。纯 Python，零依赖。 |
 
-### make test — Full test suite
+### make test — 完整测试套件
 
-| # | Command | What it does | Expected output |
-|---|---------|-------------|-----------------|
-| 19 | `make test` | Run all 56 unit tests | `Ran 56 tests in ...s — OK`. No network, no LLM, no EDA. |
+| # | 命令 | 功能 | 预期现象 |
+|---|------|------|---------|
+| 19 | `make test` | 运行全部 56 个单元测试 | `Ran 56 tests in ...s — OK`。不需要网络、LLM、EDA。 |
 
 ---
 
-## Directory layout after verification
+## 验证后的目录布局
 
 ```
 runs/
   sky130hd_gcd/
     .baseline/
-      trial.json                     ← shared baseline cache
-    20260727_230000/                 ← session 1
-      iter-1-xxxxxxxx/               ← first optimisation trial
+      trial.json                     ← 共享基线缓存
+    20260727_230000/                 ← 第一次实验
+      iter-1-xxxxxxxx/               ← 第一轮优化
         trial.json
       iter-2-yyyyyyyy/
         trial.json
-      trials.jsonl                   ← global index
+      trials.jsonl                   ← 全局索引
       tree.json
       optimization_tree.png
       agenticpd.log
       config_snapshot.json
-    20260727_231500/                 ← session 2 (baseline cache hit)
-      iter-1-zzzzzzzz/               ← starts from iter 1 (no iter-0)
+    20260727_231500/                 ← 第二次实验（基线缓存命中）
+      iter-1-zzzzzzzz/               ← 从 iter-1 开始（无 iter-0）
         trial.json
       ...
 ```
