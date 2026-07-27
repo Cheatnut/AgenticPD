@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -90,13 +91,28 @@ def resolve_run_dir(resume: Optional[str], platform: str, design: str) -> Path:
     design_dir = get_design_runs_dir(platform, design)
 
     if resume is None:
-        run_dir = design_dir / datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Auto-number sessions: 001_, 002_, ...
+        # Only match names with a 3-digit numeric prefix (NNN_YYYYMMDD_HHMMSS)
+        seq = 1
+        for d in design_dir.iterdir():
+            if not d.is_dir() or d.name.startswith("."):
+                continue
+            m = re.match(r"^(\d{3})_", d.name)
+            if m:
+                seq = max(seq, int(m.group(1)) + 1)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_dir = design_dir / f"{seq:03d}_{ts}"
         run_dir.mkdir(parents=True, exist_ok=True)
         return run_dir
 
     if resume == "latest":
-        candidates = sorted((d for d in design_dir.iterdir() if d.is_dir()),
-                            key=lambda d: d.name)
+        # Sort by session number (001_, 002_, …), fallback to name
+        def _session_key(d):
+            m = re.match(r"^(\d+)_", d.name)
+            return (int(m.group(1)), d.name) if m else (10**9, d.name)
+        candidates = sorted((d for d in design_dir.iterdir()
+                             if d.is_dir() and not d.name.startswith(".")),
+                            key=_session_key)
         if not candidates:
             sys.exit(f"Error: --resume found no historical run directories ({design_dir})")
         return candidates[-1]

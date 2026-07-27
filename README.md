@@ -90,8 +90,8 @@ python3 agenticpd/tools/clean.py sky130hd gcd --dry-run   # 预览
 python3 agenticpd/tools/clean.py sky130hd gcd --yes       # 确认并删除
 
 # 查看 trial 记录
-python3 agenticpd/tools/trial_inspect.py --list --runs-dir agenticpd/runs/<session>
-python3 agenticpd/tools/trial_inspect.py <trial_id> --stages --runs-dir agenticpd/runs/<session>
+python3 agenticpd/tools/trial_inspect.py --list sky130hd gcd 001
+python3 agenticpd/tools/trial_inspect.py <trial_id> --stages
 
 # 从已有运行生成优化树可视化
 python3 agenticpd/tools/visualize.py agenticpd/runs/<session>
@@ -125,7 +125,7 @@ python3 agenticpd/tools/visualize.py agenticpd/runs/<session>
 | fastroute_iterN.tcl | `fastroute_iterN.tcl` | 每轮生成的定制布线层容量脚本 |
 | config_snapshot.json | `config_snapshot.json` | 当次运行的完整配置存档 |
 
-> **查看 trial**：`python3 tools/trial_inspect.py --list --runs-dir runs/<session>`
+> **查看 trial**： 或 `python3 tools/trial_inspect.py --list --runs-dir runs/<session>`
 
 ## 5. 日志格式
 
