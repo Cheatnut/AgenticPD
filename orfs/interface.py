@@ -293,6 +293,31 @@ class ORFSRunner:
             if d.is_dir():
                 shutil.rmtree(d)
 
+    def wipe_all_variants(self) -> int:
+        """Wipe ALL existing agenticpd variant directories before a new run.
+
+        Guards against stale variants from a previous run with more
+        iterations (e.g. old run had 10 iters, new run has 3 — iter4..9
+        would otherwise persist and pollute results/).
+
+        Returns the number of directories removed.
+        """
+        import logging
+        log = logging.getLogger(__name__)
+        removed = 0
+        for category in ("results", "logs", "reports", "objects"):
+            parent = self.cfg.flow_dir / category / self.cfg.platform / self.cfg.design
+            if not parent.is_dir():
+                continue
+            for d in sorted(parent.iterdir()):
+                if not d.is_dir():
+                    continue
+                if d.name.startswith(self.cfg.variant_prefix):
+                    shutil.rmtree(d)
+                    removed += 1
+                    log.info("[ORFS] pre-run wipe: %s", d)
+        return removed
+
 
 # ---------------------------------------------------------------------------
 # MockORFSRunner
