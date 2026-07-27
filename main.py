@@ -78,11 +78,15 @@ def parse_args() -> argparse.Namespace:
 
 
 def resolve_run_dir(resume: Optional[str]) -> Path:
-    """Resolve the run working directory: existing for resume, new timestamp otherwise."""
+    """Resolve the run working directory.
+
+    Stage C+: no longer creates timestamped subdirectories.  All logs and
+    trial metadata live directly under runs/ (or user-specified path).
+    TrialManager creates per-trial subdirectories (runs/<trial_id>/).
+    """
     if resume is None:
-        run_dir = CFG_RUNS_DIR / datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_dir.mkdir(parents=True, exist_ok=True)
-        return run_dir
+        CFG_RUNS_DIR.mkdir(parents=True, exist_ok=True)
+        return CFG_RUNS_DIR
 
     if resume == "latest":
         candidates = sorted((d for d in CFG_RUNS_DIR.iterdir() if d.is_dir()),
@@ -186,7 +190,7 @@ def main() -> None:
 
     # Generate optimization tree visualization
     try:
-        # Add tools/ to sys.path for importing visualize module
+        # tools/ subdirectory
         import sys as _sys
         _tools_dir = str(AGENTICPD_DIR / "tools")
         if _tools_dir not in _sys.path:

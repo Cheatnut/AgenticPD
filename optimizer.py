@@ -75,7 +75,7 @@ class Optimizer:
         self.best_idx: Optional[int] = None
 
         # Stage C6: TrialManager for structured trial recording
-        self.trial_mgr = TrialManager(cfg.run_dir.parent if cfg.run_dir else Path("runs"))
+        self.trial_mgr = TrialManager(cfg.run_dir if cfg.run_dir else Path("runs"))
         self._current_trial: Optional[TrialRecord] = None
         self._parent_trial_id: Optional[str] = None
 
