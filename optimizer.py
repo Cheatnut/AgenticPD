@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-optimizer.py — AgenticPD 优化主循环（论文 §6 对照版）
+optimizer.py — AgenticPD optimisation main loop (paper sec. 6)
 
-关键变化（对照 §3.2 / §6 伪代码）：
-- 同时维护优化树 T（OptimizationTree）和历史列表 H
-- 每轮先调 ObservationTool 生成自适应概要
-- Judge 输出 {branch_node, branch_stage, hints}
-- 只对 s ∈ {b} ∪ Aft(b) 调阶段智能体；Bef 参数从树祖先继承
-- 使用 ORFSRunner.branch_from() 增量重跑下游阶段
+Key changes vs. paper pseudo-code:
+- Maintains both the optimisation tree T (OptimizationTree) and the history list H
+- Each iteration begins with ObservationTool generating an adaptive summary
+- Judge outputs {branch_node, branch_stage, hints}
+- Only invokes StageAgents for s in {b} U Aft(b); Bef parameters are inherited from tree ancestors
+- Uses copy_parent_results() + per-stage pipeline for incremental downstream re-runs
 """
 
 from __future__ import annotations
@@ -30,15 +30,15 @@ log = logging.getLogger("optimizer")
 
 
 def _aft_stages(stage: str) -> List[str]:
-    """论文 1.2 节：return stages strictly after `stage`"""
+    """Paper sec. 1.2: return stages strictly after *stage*."""
     idx = config.STAGES.index(stage)
     return config.STAGES[idx + 1:]
 
 
 def _next_stage_of_node(node_stage: str) -> Optional[str]:
-    """节点所在阶段 → 从该节点分支时的重跑起始阶段（论文 §3.2 一致性约束）。
+    """Map node stage to the re-run start stage when branching (paper sec. 3.2 consistency constraint).
 
-    root → FP；FP → PL；PL → CTS；CTS → RT；RT → None（叶子不可分支）。
+    root -> FP; FP -> PL; PL -> CTS; CTS -> RT; RT -> None (leaf, cannot branch).
     """
     if node_stage == "root":
         return "FP"
@@ -49,12 +49,12 @@ def _next_stage_of_node(node_stage: str) -> Optional[str]:
 
 
 def _downstream_stages(branch_stage: str) -> List[str]:
-    """{branch_stage} ∪ Aft(branch_stage) = 需要 LLM 生成参数 + 重跑的阶段"""
+    """{branch_stage} U Aft(branch_stage) = stages that need LLM param generation + re-run."""
     return [branch_stage] + _aft_stages(branch_stage)
 
 
 def _uid_to_iter(node_id: str) -> int:
-    """从 node_id（如 "iter3_PL"）提取迭代号，容错"""
+    """Extract iteration number from node_id (e.g. "iter3_PL"), with fallback."""
     try:
         return int(node_id.split("_")[0].replace("iter", ""))
     except (ValueError, IndexError):
@@ -62,7 +62,7 @@ def _uid_to_iter(node_id: str) -> int:
 
 
 class Optimizer:
-    """优化主循环控制器"""
+    """Optimisation main-loop controller."""
 
     def __init__(self, cfg: FrameworkConfig, llm: Any, runner: ORFSRunner):
         self.cfg = cfg
@@ -166,13 +166,13 @@ class Optimizer:
 
     # ------------------------------------------------------------------
     def _cross_exp(self, stage: str, window: int = 5) -> List[Dict[str, Any]]:
-        """论文 e_s：历史中本阶段作为 branch_stage 的条目（最近 window 条）"""
+        """Paper e_s: historical entries where this stage was the branch_stage (most recent *window* entries)."""
         candidates = [e for e in self.history
                       if (e.get("judge_decision") or {}).get("branch_stage") == stage]
         return candidates[-window:]
 
     def _persist(self) -> None:
-        """每轮结束时同时原子化落盘树与历史"""
+        """Atomically persist tree and history at the end of each iteration."""
         save_history_atomic(self.cfg.history_path, self.history)
         save_tree_atomic(self.cfg.tree_path, self.tree)
 
@@ -194,7 +194,7 @@ class Optimizer:
             "judge_decision": judge_decision,
             "stage_reasons": stage_reasons or {},
         }
-        # 分支信息（论文 §6 第 5 行的 (n_hat, b_k) 输出）
+        # Branch info (paper sec. 6 line 5 output: n_hat, b_k)
         if judge_decision:
             entry["branch_node"] = judge_decision.get("branch_node")
             entry["branch_stage"] = judge_decision.get("branch_stage")
@@ -212,18 +212,18 @@ class Optimizer:
     # ------------------------------------------------------------------
     def _add_to_tree(self, iteration: int, parent_id: str,
                      stages_chain: List[tuple]) -> List[str]:
-        """往树中挂载新节点链，并对父节点递增 branch_count（若并非从自身延伸）。
+        """Append new node chain to tree, increment parent branch_count (unless extending from itself).
 
-        stages_chain: [(stage, variant, params, stage_qor), ...] 仅含下游阶段。
+        stages_chain: [(stage, variant, params, stage_qor), ...]  downstream stages only.
         """
-        # 分支计数递增（论文 E(n) 更新）
+        # Increment branch count (paper E(n) update)
         if parent_id != ROOT_ID:
             self.tree.increment_branch_count(parent_id)
         return self.tree.add_path(iteration, parent_id, stages_chain)
 
     # ------------------------------------------------------------------
     def run_baseline(self) -> RunResult:
-        """基线迭代：从根节点全跑，构建树的最初四层节点"""
+        """Baseline iteration: full run from root, building the first four tree layers."""
         log.info("========== Iter #0 (Baseline, full run from ROOT) ==========")
         stage_params = {s: dict(config.BASELINE_PARAMS.get(s, {}))
                         for s in config.STAGES}
@@ -234,7 +234,7 @@ class Optimizer:
 
         result = self.runner.run_flow(stage_params, variant, 0)
 
-        # 在树中登记：root → FP → PL → CTS → RT
+        # Register in tree: root -> FP -> PL -> CTS -> RT
         if result.ok:
             chain = [(s, variant, stage_params.get(s, {}),
                       result.stage_qor.get(s)) for s in config.STAGES]
@@ -258,19 +258,19 @@ class Optimizer:
 
     # ------------------------------------------------------------------
     def run_iteration(self, iteration: int) -> RunResult:
-        """论文 §6 第 4–13 行：观测概要 → Judge → 分支 → 下游执行"""
+        """Paper sec. 6 lines 4-13: observation summary -> Judge -> branch -> downstream execution."""
         log.info("========== Iter #%d ==========", iteration)
 
-        # 4) 观测概要
+        # 4) Observation summary
         summary = build_observation_summary(
             self.tree, self.history, self._best_qor(),
             self.cfg.max_branch_count)
 
-        # 5) Judge 决策
+        # 5) Judge decision
         decision = self.judge.act({
             "summary": summary, "history": self.history, "best": self.best_entry})
         branch_node_id = (decision["branch_node"] or "").strip()
-        # 规范化：ROOT / root → ROOT_ID
+        # Normalise: ROOT / root -> ROOT_ID
         if branch_node_id.upper() == "ROOT":
             branch_node_id = ROOT_ID
         branch_stage = decision["branch_stage"]
@@ -281,7 +281,7 @@ class Optimizer:
             if h:
                 log.info("#%d [Judge Agent] @%s Agent: %s", iteration, s, h[:80])
 
-        # 6) 解析分支节点：获取祖先参数与 QoR（复用 Bef 结果）
+        # 6) Resolve branch node: get ancestor params and QoR (reuse Bef results)
         branch_node = self.tree.find_node(branch_node_id)
         if branch_node is None:
             log.warning("#%d [Judge Agent] branch_node=%s not in tree, fallback to ROOT",
@@ -290,9 +290,10 @@ class Optimizer:
             branch_node_id = ROOT_ID
         parent_variant = branch_node.variant
 
-        # 一致性约束（论文 §3.2）：branch_stage 必须是 branch_node 所在阶段的
-        # 下一阶段——选择节点即唯一决定了重跑起点。若 Judge 输出不一致，
-        # 以 branch_node 为准修正（缺链挂载会破坏树的路径完整性）。
+        # Consistency constraint (paper sec. 3.2): branch_stage must be the stage
+        # immediately following the branch_node stage — choosing a node uniquely
+        # determines the re-run start point. If Judge output is inconsistent,
+        # correct based on branch_node (missing links break tree path integrity).
         expected_stage = _next_stage_of_node(branch_node.stage)
         if expected_stage is None:
             log.warning("#%d [Judge Agent] branch_node=%s is a leaf (RT), cannot branch, fallback to ROOT+FP",
@@ -310,10 +311,11 @@ class Optimizer:
             branch_stage = expected_stage
             decision["branch_stage"] = branch_stage
 
-        # 从树祖先提取 Bef 阶段参数（继承，不调 LLM）
+        # Extract Bef-stage params from tree ancestors (inherited, no LLM call)
         inherited_params = self.tree.get_params_chain(branch_node_id)
-        # Bef 阶段的 QoR：祖先链 + 分支起点节点自身（它是最后一个 Bef 阶段——
-        # 例如从 FP 节点分支重跑 PL 时，Bef(PL)={FP}=分支起点本身）
+        # Bef-stage QoR: ancestor chain + the branch origin node itself (it is the
+        # last Bef stage — e.g. branching from an FP node to re-run PL,
+        # Bef(PL)={FP}=branch origin itself)
         inherited_qor_map: Dict[str, Dict[str, float]] = {}
         bef_nodes = self.tree.ancestors(branch_node_id)
         if branch_node.stage in config.STAGES:
@@ -322,13 +324,14 @@ class Optimizer:
             if node.stage in config.STAGES and node.stage_qor:
                 inherited_qor_map[node.stage] = node.stage_qor
 
-        # Bef 阶段的上游 QoR 列表（流水线的初始输入：只含分支祖先的 QoR，
-        # 后续每个阶段跑完后追加该阶段的真实 QoR，供下一个 StageAgent 使用）
+        # Upstream QoR list for Bef stages (initial pipeline input: only branch
+        # ancestor QoR; each completed stage appends its real QoR for the next
+        # StageAgent to consume)
         def _build_upstream_qor() -> List[dict]:
             result: List[dict] = []
             for stage in config.STAGES:
                 if stage not in inherited_qor_map:
-                    break  # Bef 链止于分支起点
+                    break  # Bef chain stops at branch origin
                 sq = inherited_qor_map[stage]
                 ws = tns = None
                 for k, v in sq.items():
@@ -350,25 +353,28 @@ class Optimizer:
             parent_params=inherited_params,
         )
 
-        # 7) 逐阶段流水线：StageAgent 调 LLM → make 单阶段 → 获取真实 QoR →
-        #    传递给下一个 StageAgent（论文 §5 的 ctx_s = Q_k(i)_{i∈Bef(s)}）
-        stage_params = dict(inherited_params)  # Bef 继承
+        # 7) Per-stage pipeline: StageAgent calls LLM -> make single stage ->
+        #    obtain real QoR -> pass to next StageAgent
+        #    (paper sec. 5: ctx_s = Q_k(i)_{i in Bef(s)})
+        stage_params = dict(inherited_params)  # Bef inheritance
         stage_reasons: Dict[str, str] = {}
-        live_upstream_qor = _build_upstream_qor()  # 流水线中动态增长的上游 QoR
+        live_upstream_qor = _build_upstream_qor()  # dynamically growing upstream QoR
         collected_stage_qor: Dict[str, Dict[str, float]] = {}
         failed_stage: Optional[str] = None
 
-        # 7a) 建立 variant 基线
+        # 7a) Establish variant baseline
         if branch_node_id == ROOT_ID:
-            # 从根节点出发：确保 variant 目录干净（防止上次崩溃残留导致 make 跳步）
+            # From root: ensure variant directory is clean (prevents make from
+            # skipping stages due to stale crash artifacts)
             self.runner._wipe_variant(new_variant)  # type: ignore[attr-defined]
         else:
-            # 从中间节点分支：复制父产物到新 variant（Bef 阶段结果就位）
+            # Branch from intermediate node: copy parent artifacts to new variant
+            # (Bef-stage results are now in place)
             self.runner.copy_parent_results(parent_variant, new_variant)
 
-        # 7b) 逐阶段：LLM → make → 获取 QoR → 下一阶段
+        # 7b) Per stage: LLM -> make -> obtain QoR -> next stage
         for s in downstream:
-            # a) StageAgent 生成参数（使用当前积累的真实上游 QoR）
+            # a) StageAgent generates parameters (using accumulated real upstream QoR)
             ctx = {
                 "upstream_qor": live_upstream_qor,
                 "cross_iteration_exp": self._cross_exp(s),
@@ -411,23 +417,24 @@ class Optimizer:
             live_upstream_qor.append(
                 {"stage": s, "ws_ps": ws, "tns_ps": tns})
 
-        # 8) 最终 QoR：所有下游阶段成功后跑 make finish 获取完整指标（含面积/功耗）
+        # 8) Final QoR: after all downstream stages succeed, run make finish
+        #    to obtain complete metrics (including area/power)
         if failed_stage is not None:
             result = RunResult(
                 ok=False, variant=new_variant,
                 failed_stage=failed_stage,
-                error=f"阶段 {failed_stage} make 失败",
+                error=f"Stage {failed_stage} make failed",
                 stage_qor=collected_stage_qor)
         else:
             result = self.runner.run_finish(stage_params, new_variant, iteration)
 
-        # 9) 登记新节点到树（仅下游阶段）
+        # 9) Register new nodes in tree (downstream stages only)
         if result.ok:
             chain = [(s, new_variant, stage_params.get(s, {}),
                       collected_stage_qor.get(s)) for s in downstream]
             self._add_to_tree(iteration, branch_node_id, chain)
 
-        # 10) 记录历史
+        # 10) Record history
         self._record(iteration, stage_params, result, decision, stage_reasons)
 
         # Stage C6: finalize trial record
@@ -454,8 +461,9 @@ class Optimizer:
         try:
             if not self.history:
                 self.run_baseline()
-            # 下一个迭代号 = 历史中最大迭代号 + 1（不能用 len(history)：
-            # 历史中可能存在非连续迭代号，如调试期插入的测试条目）
+            # Next iteration number = max iteration in history + 1.
+            # (Cannot use len(history): history may contain non-consecutive
+            # iteration numbers from ad-hoc test entries.)
             start = max((e.get("iteration", -1) for e in self.history),
                         default=-1) + 1
             for i in range(start, self.cfg.iterations + 1):
