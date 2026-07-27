@@ -186,7 +186,7 @@ def main() -> None:
 
     # Generate optimization tree visualization
     try:
-        # tools/ 子目录：将 tools 路径加入 sys.path
+        # Add tools/ to sys.path for importing visualize module
         import sys as _sys
         _tools_dir = str(AGENTICPD_DIR / "tools")
         if _tools_dir not in _sys.path:
