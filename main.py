@@ -80,13 +80,14 @@ def parse_args() -> argparse.Namespace:
 def resolve_run_dir(resume: Optional[str]) -> Path:
     """Resolve the run working directory.
 
-    Stage C+: no longer creates timestamped subdirectories.  All logs and
-    trial metadata live directly under runs/ (or user-specified path).
-    TrialManager creates per-trial subdirectories (runs/<trial_id>/).
+    Each ``main.py`` invocation gets a timestamped session directory under
+    ``runs/``.  TrialManager creates per-trial subdirectories within it.
+    Multiple invocations never share files.
     """
     if resume is None:
-        CFG_RUNS_DIR.mkdir(parents=True, exist_ok=True)
-        return CFG_RUNS_DIR
+        run_dir = CFG_RUNS_DIR / datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_dir.mkdir(parents=True, exist_ok=True)
+        return run_dir
 
     if resume == "latest":
         candidates = sorted((d for d in CFG_RUNS_DIR.iterdir() if d.is_dir()),
