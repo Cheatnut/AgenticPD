@@ -19,12 +19,14 @@ Answers the six questions every trial must answer:
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 # When running from tools/ subdirectory
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from schemas.trial import TrialRecord
 from trial_manager import TrialManager
 
 
@@ -108,10 +110,49 @@ def main():
 
     mgr = TrialManager(runs_dir)
 
-    if args.list:
+    # ---- Fallback: if no JSONL index, scan for */trial.json ----
+    def _scan_trials(directory: Path) -> list:
+        """Walk directory for trial.json files (when no JSONL index exists).
+
+        Checks two patterns:
+          1. <directory>/<subdir>/trial.json  (runs/ layout)
+          2. <directory>/trial.json            (single run dir layout)
+        """
+        found = []
+        # Pattern 1: subdirectories with trial.json
+        if directory.is_dir():
+            for candidate in sorted(directory.iterdir()):
+                if not candidate.is_dir():
+                    continue
+                tj = candidate / "trial.json"
+                if tj.is_file():
+                    try:
+                        t = TrialRecord.from_dict(json.loads(tj.read_text(encoding="utf-8")))
+                        found.append(t)
+                    except Exception:
+                        pass
+        # Pattern 2: trial.json directly in the given directory
+        direct = directory / "trial.json"
+        if direct.is_file():
+            try:
+                t = TrialRecord.from_dict(json.loads(direct.read_text(encoding="utf-8")))
+                if t.trial_id not in {f.trial_id for f in found}:
+                    found.append(t)
+            except Exception:
+                pass
+        return found
+
+    def _get_trials():
         trials = mgr.list_all()
         if not trials:
-            print("No trials found.")
+            trials = _scan_trials(runs_dir)
+        return trials
+
+    if args.list:
+        trials = _get_trials()
+        if not trials:
+            print("No trials found in {}".format(runs_dir))
+            print("(looked for trials.jsonl and */trial.json)")
             return
         for t in trials:
             status_icon = {"ok": "+", "failed": "X", "running": "~"}.get(t.status, "?")
@@ -122,7 +163,7 @@ def main():
         return
 
     if args.failed:
-        trials = mgr.list_by_status("failed")
+        trials = [t for t in _get_trials() if t.status == "failed"]
         if not trials:
             print("No failed trials.")
             return
@@ -131,15 +172,20 @@ def main():
         return
 
     if args.latest:
-        trial = mgr.latest()
-        if trial is None:
+        trials = _get_trials()
+        if not trials:
             print("No trials found.")
             return
-        _print_trial(trial, args.stages)
+        _print_trial(trials[-1], args.stages)
         return
 
     if args.trial_id:
         trial = mgr.get(args.trial_id)
+        if trial is None:
+            for t in _get_trials():
+                if t.trial_id == args.trial_id:
+                    trial = t
+                    break
         if trial is None:
             print(f"Trial '{args.trial_id}' not found.")
             sys.exit(1)
