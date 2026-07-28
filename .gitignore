@@ -4,6 +4,12 @@
 # Run artifacts (logs, history, generated fastroute.tcl, etc.)
 runs/
 
+# ORFS artifact directories (may leak into project root from aborted runs)
+objects/
+logs/
+reports/
+results/
+
 # Python cache
 __pycache__/
 *.pyc

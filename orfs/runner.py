@@ -103,6 +103,8 @@ def execute_stage(
     """
     from schemas.trial import StageResult, FailureClass
 
+    from datetime import datetime, timezone
+
     clean_target = CLEAN_TARGETS.get(stage)
     make_target = STAGE_MAKE_TARGET.get(stage)
     if not clean_target or not make_target:
@@ -119,16 +121,20 @@ def execute_stage(
         cfg, stage_params, variant, iteration, target=make_target,
     )
     log_path_str = str(log_path)
+    cmd_str = " ".join(cmd)
+    start_ts = datetime.now(timezone.utc).isoformat()
 
     log.info("#%d [ORFS] make %s...", iteration, make_target)
     start = time.monotonic()
     returncode, timed_out = run_make(cfg, cmd, log_path)
     elapsed = time.monotonic() - start
+    end_ts = datetime.now(timezone.utc).isoformat()
 
     if timed_out:
         log.error("#%d [ORFS] %s timeout (%.1fs)", iteration, stage, elapsed)
         return StageResult(stage=stage, status="failed", elapsed_s=elapsed,
                           exit_code=-1, log_path=log_path_str,
+                          command=cmd_str, start_time=start_ts, end_time=end_ts,
                           failure=FailureClass.TIMEOUT,
                           error_message=f"Stage timeout after {elapsed:.1f}s")
 
@@ -137,18 +143,34 @@ def execute_stage(
                   iteration, stage, returncode, elapsed)
         return StageResult(stage=stage, status="failed", elapsed_s=elapsed,
                           exit_code=returncode, log_path=log_path_str,
+                          command=cmd_str, start_time=start_ts, end_time=end_ts,
                           failure=FailureClass.from_exit_code(returncode),
                           error_message=f"make exit code {returncode}")
 
-    # 3) Parse stage QoR
+    # 3) Parse stage QoR and determine report path
     stage_qor_raw = parse_stage_qor(cfg, variant)
     stage_qor = stage_qor_raw.get(stage, {})
+    # Record path to the canonical stage report JSON.
+    # cfg.reports_dir(variant) already includes platform/design/variant —
+    # do NOT append them again (would duplicate the path segments).
+    from orfs.parser import STAGE_QOR_SOURCES
+    report_jsons = STAGE_QOR_SOURCES.get(stage, [])
+    reports_base = cfg.reports_dir(variant)
+    report_path = None
+    for rj in report_jsons:
+        candidate = reports_base / rj
+        if candidate.is_file():
+            report_path = str(candidate)
+            break
+
     log.info("#%d [ORFS] %s done!(%.1fs)", iteration, stage, elapsed)
     if stage_qor:
         log.info("#%d [ORFS] %s QoR: %s", iteration, stage,
                  ", ".join(f"{k}={v}" for k, v in list(stage_qor.items())[:3]))
     return StageResult(stage=stage, status="ok", elapsed_s=elapsed,
                       exit_code=0, log_path=log_path_str,
+                      command=cmd_str, start_time=start_ts, end_time=end_ts,
+                      report_path=report_path,
                       stage_qor=stage_qor)
 
 

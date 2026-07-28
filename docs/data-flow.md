@@ -70,8 +70,11 @@
 }
 ```
 
-tree.json 与 history.json 每轮结束后由 `Optimizer._persist()` 同时原子落盘
-（先写 `.tmp` 再 `os.replace`，中途崩溃不会损坏旧文件）。
+tree.json 每轮结束后由 `Optimizer._persist()` 原子落盘（先写 `.tmp` 再
+`os.replace`，中途崩溃不会损坏旧文件）。trial 数据通过 `TrialManager` 写入
+`trials.jsonl`（全局 append-only 索引）和各 trial 目录下的 `trial.json`。
+`history.json` 仅为兼容旧版可视化/分析工具保留的派生格式（从 `trials.jsonl`
+重建），不再作为主存储。
 树节点仅在迭代成功时挂载（失败轮产物不完整、不可作为未来分支起点）。
 
 ---
@@ -169,7 +172,7 @@ tree.json 与 history.json 每轮结束后由 `Optimizer._persist()` 同时原�
 ### 2.4 信息流总览（一轮迭代，与论文 §6 伪代码逐行对照）
 
 ```
-tree.json + history.json（Optimizer 维护，每轮结束原子落盘）
+tree.json + trials.jsonl（TrialManager 维护 trials.jsonl 主索引，tree.json 每轮原子落盘）
    │
    ├─→ ObservationTool（纯计算）：
    │     E(n) ← tree.branchable_nodes()     B(s) ← compute_stage_bottleneck()

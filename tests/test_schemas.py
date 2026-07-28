@@ -248,6 +248,63 @@ class TrialRecordIntegrationTest(unittest.TestCase):
         h2 = CheckpointManager.param_hash({"PL": {"B": 2}, "FP": {"A": 1}})
         self.assertEqual(h1, h2)
 
+    # ------------------------------------------------------------------
+    # Stage C contract: StageResult new fields (command, start/end, report_path)
+    # ------------------------------------------------------------------
+    def test_stage_result_full_roundtrip(self):
+        """StageResult with all Stage C fields survives to_dict/from_dict."""
+        sr = StageResult(
+            stage="CTS", status="ok", elapsed_s=8.5, exit_code=0,
+            log_path="logs/sky130hd/gcd/iter0/4_cts.make.log",
+            command="make -C <flow_dir> DESIGN_CONFIG=./designs/sky130hd/gcd/config.mk FLOW_VARIANT=agenticpd_iter0 cts",
+            start_time="2026-07-28T15:00:00+00:00",
+            end_time="2026-07-28T15:00:08+00:00",
+            report_path="reports/sky130hd/gcd/agenticpd_iter0/4_1_cts.json",
+            stage_qor={"4_1_cts_ws_ps": -1200.0},
+        )
+        d = sr.to_dict()
+        # All new fields present in serialised dict
+        self.assertEqual(d["command"], sr.command)
+        self.assertEqual(d["start_time"], sr.start_time)
+        self.assertEqual(d["end_time"], sr.end_time)
+        self.assertEqual(d["report_path"], sr.report_path)
+        # Roundtrip preserves identity
+        sr2 = StageResult.from_dict(d)
+        self.assertEqual(sr2.command, sr.command)
+        self.assertEqual(sr2.report_path, sr.report_path)
+        self.assertEqual(sr2.elapsed_s, 8.5)
+
+    def test_stage_result_missing_new_fields_backward_compat(self):
+        """Old JSON without new fields still deserialises (backward compat)."""
+        old_dict = {
+            "stage": "FP", "status": "ok", "elapsed_s": 10.0,
+            "exit_code": 0,
+            "stage_qor": {"2_1_floorplan_ws_ps": -1154.1},
+        }
+        sr = StageResult.from_dict(old_dict)
+        self.assertIsNone(sr.command)
+        self.assertIsNone(sr.start_time)
+        self.assertIsNone(sr.end_time)
+        self.assertIsNone(sr.report_path)
+
+    def test_report_path_resolution_from_config(self):
+        """report_path is resolved correctly via cfg.reports_dir (no duplication)."""
+        # Create a mock ORFS reports directory structure
+        variant = "agenticpd_iter0"
+        reports_dir = self.flow_dir / "reports" / "sky130hd" / "gcd" / variant
+        reports_dir.mkdir(parents=True)
+        # Write a stage report JSON that parse_stage_qor would look for
+        (reports_dir / "2_1_floorplan.json").write_text(
+            '{"2_1_floorplan_ws_ps": -1154.1}')
+        # Verify path structure: cfg.reports_dir IS the full path
+        from config import FrameworkConfig
+        cfg = FrameworkConfig(flow_dir=self.flow_dir, platform="sky130hd", design="gcd")
+        self.assertEqual(
+            str(cfg.reports_dir(variant)),
+            str(self.flow_dir / "reports" / "sky130hd" / "gcd" / variant))
+        # The report file exists where we expect it
+        self.assertTrue((reports_dir / "2_1_floorplan.json").is_file())
+
 
 class FailureClassTest(unittest.TestCase):
     def test_from_exit_code_zero(self):
@@ -259,6 +316,115 @@ class FailureClassTest(unittest.TestCase):
     def test_from_exit_code_timeout(self):
         self.assertEqual(FailureClass.from_exit_code(0, timed_out=True),
                          FailureClass.TIMEOUT)
+
+
+# =============================================================================
+# Stage C contract: checkpoint compatibility tests (P1-2 fix)
+# =============================================================================
+
+class CheckpointCompatibilityTest(unittest.TestCase):
+    """Verify is_compatible() per ParamSpec.affects — formal unit tests.
+
+    These tests cover the checkpoint invalidation rules required by the
+    Stage C plan: FP/CTS/RT checkpoints, SETUP_SLACK_MARGIN's cross-stage
+    effect, unknown parameters, and edge cases.
+    """
+
+    def setUp(self):
+        import tempfile
+        self.tmpdir = Path(tempfile.mkdtemp())
+        self.flow_dir = self.tmpdir / "flow"
+        self.runs_dir = self.tmpdir / "runs"
+        self.runs_dir.mkdir(parents=True)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir)
+
+    def _make_cp(self, stage, param_hash="abc123"):
+        """Create a minimal CheckpointRef for compatibility testing."""
+        return CheckpointRef(
+            checkpoint_id=CheckpointRef.make_id("test001", stage),
+            source_trial_id="test001",
+            stage=stage, param_hash=param_hash, orfs_commit="unresolved",
+        )
+
+    def _base_params(self):
+        return {"FP": {"CORE_UTILIZATION": 38}, "PL": {}, "CTS": {}, "RT": {}}
+
+    # ------------------------------------------------------------------
+    # FP checkpoint compat
+    # ------------------------------------------------------------------
+    def test_fp_checkpoint_core_util_change_incompatible(self):
+        """CORE_UTILIZATION affects FP/PL/CTS/RT → invalidates FP checkpoint."""
+        cm = CheckpointManager(self.flow_dir)
+        cp = self._make_cp("FP")
+        new_p = {"FP": {"CORE_UTILIZATION": 50}, "PL": {}, "CTS": {}, "RT": {}}
+        self.assertFalse(cm.is_compatible(cp, new_p, self._base_params()))
+
+    def test_fp_checkpoint_rt_only_change_compatible(self):
+        """FASTROUTE_LAYER_ADJUSTMENT affects RT only → FP checkpoint still valid."""
+        cm = CheckpointManager(self.flow_dir)
+        cp = self._make_cp("FP")
+        new_p = {"FP": {"CORE_UTILIZATION": 38}, "PL": {}, "CTS": {},
+                 "RT": {"FASTROUTE_LAYER_ADJUSTMENT": 0.25}}
+        self.assertTrue(cm.is_compatible(cp, new_p, self._base_params()))
+
+    def test_fp_checkpoint_same_params_compatible(self):
+        """No parameter changes → always compatible."""
+        cm = CheckpointManager(self.flow_dir)
+        cp = self._make_cp("FP")
+        self.assertTrue(cm.is_compatible(cp, self._base_params(), self._base_params()))
+
+    # ------------------------------------------------------------------
+    # CTS checkpoint compat
+    # ------------------------------------------------------------------
+    def test_cts_checkpoint_setup_slack_margin_change_incompatible(self):
+        """SETUP_SLACK_MARGIN affects FP/PL/CTS/RT → invalidates CTS checkpoint."""
+        cm = CheckpointManager(self.flow_dir)
+        cp = self._make_cp("CTS")
+        new_p = {"FP": {"CORE_UTILIZATION": 38}, "PL": {}, "CTS": {"SETUP_SLACK_MARGIN": 0.1}, "RT": {}}
+        self.assertFalse(cm.is_compatible(cp, new_p, self._base_params()))
+
+    def test_cts_checkpoint_grt_iters_change_compatible(self):
+        """GRT_CONGESTION_ITERATIONS affects RT only → CTS checkpoint still valid."""
+        cm = CheckpointManager(self.flow_dir)
+        cp = self._make_cp("CTS")
+        new_p = {"FP": {"CORE_UTILIZATION": 38}, "PL": {}, "CTS": {},
+                 "RT": {"GRT_CONGESTION_ITERATIONS": 50}}
+        self.assertTrue(cm.is_compatible(cp, new_p, self._base_params()))
+
+    # ------------------------------------------------------------------
+    # RT checkpoint compat
+    # ------------------------------------------------------------------
+    def test_rt_checkpoint_setup_slack_margin_change_incompatible(self):
+        """SETUP_SLACK_MARGIN affects FP/PL/CTS/RT → invalidates RT checkpoint."""
+        cm = CheckpointManager(self.flow_dir)
+        cp = self._make_cp("RT")
+        new_p = {"FP": {"CORE_UTILIZATION": 38}, "PL": {}, "CTS": {"SETUP_SLACK_MARGIN": 0.15}, "RT": {}}
+        self.assertFalse(cm.is_compatible(cp, new_p, self._base_params()))
+
+    # ------------------------------------------------------------------
+    # Unknown parameter
+    # ------------------------------------------------------------------
+    def test_unknown_param_conservative_incompatible(self):
+        """Unknown parameter → conservative fallback: assume incompatible."""
+        cm = CheckpointManager(self.flow_dir)
+        cp = self._make_cp("FP")
+        new_p = {"FP": {"UNKNOWN_PARAM_X": 42}, "PL": {}, "CTS": {}, "RT": {}}
+        self.assertFalse(cm.is_compatible(cp, new_p, self._base_params()))
+
+    # ------------------------------------------------------------------
+    # Edge: multi-param change, only one invalidates
+    # ------------------------------------------------------------------
+    def test_multi_param_one_incompatible_means_incompatible(self):
+        """If any changed param invalidates the checkpoint → incompatible."""
+        cm = CheckpointManager(self.flow_dir)
+        cp = self._make_cp("CTS")
+        # FASTROUTE_LAYER_ADJUSTMENT alone→compatible, but SETUP_SLACK_MARGIN→incompatible
+        new_p = {"FP": {"CORE_UTILIZATION": 38}, "PL": {}, "CTS": {"SETUP_SLACK_MARGIN": 0.05},
+                 "RT": {"FASTROUTE_LAYER_ADJUSTMENT": 0.15}}
+        self.assertFalse(cm.is_compatible(cp, new_p, self._base_params()))
 
 
 if __name__ == "__main__":

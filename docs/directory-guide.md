@@ -100,4 +100,4 @@
 | 目录 | 职责 |
 |------|------|
 | `attachments/` | 文档用图片（架构图、优化树截图） |
-| `runs/` | 运行产物（不进 git）。每个 `main.py` 调用创建一个 `<时间戳>/` 会话目录，内含 `trials.jsonl`（索引）、`<trial_id>/trial.json`（TrialRecord）、`agenticpd.log`、`history.json`、`tree.json`。`clean.py` 可一键清理 |
+| `runs/` | 运行产物（不进 git）。每个 `main.py` 调用创建一个 `<时间戳>/` 会话目录，内含 `trials.jsonl`（主索引）、`<trial_id>/trial.json`（TrialRecord）、`agenticpd.log`、`tree.json`。`history.json` 仅兼容旧工具，`clean.py` 可一键清理 |

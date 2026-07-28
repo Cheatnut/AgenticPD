@@ -19,6 +19,7 @@ All models support:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import uuid
 from dataclasses import dataclass, field, asdict
@@ -26,6 +27,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+log = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -78,6 +81,12 @@ class StageResult:
     exit_code: Optional[int] = None     # process return code; None if stage was skipped
     log_path: Optional[str] = None      # path to stage make log (relative to artifact_dir)
 
+    # Execution metadata (Stage C contract: command, wall time bounds, report path)
+    command: Optional[str] = None       # make command line executed (for audit/replay)
+    start_time: Optional[str] = None    # ISO 8601 timestamp when stage started
+    end_time: Optional[str] = None      # ISO 8601 timestamp when stage ended
+    report_path: Optional[str] = None   # path to stage report JSON (e.g. 2_floorplan.json)
+
     # Intermediate QoR extracted immediately after this stage.
     # Keys follow ORFS convention, e.g. "2_1_floorplan_ws_ps", "3_5_place_dp_ws_ps".
     stage_qor: Dict[str, float] = field(default_factory=dict)
@@ -113,6 +122,10 @@ class StageResult:
             elapsed_s=d["elapsed_s"],
             exit_code=d.get("exit_code"),
             log_path=d.get("log_path"),
+            command=d.get("command"),
+            start_time=d.get("start_time"),
+            end_time=d.get("end_time"),
+            report_path=d.get("report_path"),
             stage_qor=d.get("stage_qor", {}),
             failure=failure,
             error_message=d.get("error_message"),
@@ -350,7 +363,7 @@ def load_trials_from_jsonl(jsonl_path: Path) -> List[TrialRecord]:
                 trial = TrialRecord.from_dict(json.loads(line))
                 seen[trial.trial_id] = trial  # last-wins
             except (json.JSONDecodeError, KeyError, ValueError) as e:
-                print(f"[WARN] Skipping corrupt JSONL line: {e}")
+                log.warning("Skipping corrupt JSONL line: %s", e)
     return list(seen.values())
 
 
@@ -387,6 +400,22 @@ if __name__ == "__main__":
     sr_fail = StageResult(stage="PL", status="failed", elapsed_s=45.0, exit_code=1,
                           failure=FailureClass.TOOL_CRASH, error_message="openroad segfault")
     check(sr_fail.failure == FailureClass.TOOL_CRASH, "StageResult failure enum")
+
+    # Stage C contract: command, start/end timestamps, report_path
+    sr_full = StageResult(
+        stage="CTS", status="ok", elapsed_s=8.0, exit_code=0,
+        command="make -C <flow_dir> DESIGN_CONFIG=... CTS ...", start_time="2026-07-28T15:00:00+00:00",
+        end_time="2026-07-28T15:00:08+00:00",
+        report_path="reports/sky130hd/gcd/iter0/4_cts.json",
+        stage_qor={"4_1_cts_ws_ps": -1200.0},
+    )
+    check(sr_full.command == "make -C <flow_dir> DESIGN_CONFIG=... CTS ...", "StageResult command recorded")
+    check(sr_full.start_time == "2026-07-28T15:00:00+00:00", "StageResult start_time")
+    check(sr_full.end_time is not None, "StageResult end_time set")
+    check(sr_full.report_path is not None, "StageResult report_path set")
+    sr_full_rt = StageResult.from_dict(sr_full.to_dict())
+    check(sr_full_rt.command == sr_full.command, "StageResult roundtrip command")
+    check(sr_full_rt.report_path == sr_full.report_path, "StageResult roundtrip report_path")
 
     # elapsed_s must be >= 0
     try:

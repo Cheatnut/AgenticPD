@@ -1,123 +1,59 @@
-# AGENTS.md - AgenticPD 工程规范
+# AgenticPD Planner / Checker 规范
 
-本文件适用于 flow/agenticpd/ 及其全部子目录。目标是把可运行 Demo 演化为
-可复现、可审计、可比较的 Flow Optimization 实验平台。
+AgenticPD 是将 AgenticPD Demo 演化为可复现、可审计、可比较的 Flow Optimization 实验平台；总体 A–H 八阶段路线见 `docs/plans/AgenticPD-Demo审查与迭代计划.md`。
 
----
+本规范适用于本目录及全部子目录。Codex 的目标是保证平台演化可复现、可审计、可比较；原则上只读，不替代 Claude 实现。
 
-## 1. 分支工作流与阶段管理
+## 1. 职责与流程
 
-项目分为 A–H 共八个阶段，每个阶段在独立分支上开发：
+- Codex 负责：扫描现状、制定分阶段 Plan、定义验收标准、PR 前审查、运行核验、提出可执行修改意见，以及验收后的 commit/merge。
+- Claude 负责按已确认 Plan 实现代码、测试和文档；Codex 不直接实施功能，除非用户明确授权。
+- 流程固定为：Codex Plan → Claude 实现 → Codex 调用审查 skill（可用时）并核验 → Claude 修正 → Codex 验收和 Git 收尾。
+- 审查覆盖：阶段边界、实验契约、测试、数据/路径安全、文档一致性、无关改动和回归风险；未通过不得提交。
+- `git push`、删除、重写历史、修改 `.env`/密钥/CI/CD、数据库迁移、全局依赖或系统配置，必须先取得用户明确授权。
 
-```
-main
-  ├── agenticpd-stage-a    ← 阶段 A：冻结 Demo、建立可回归的最小实验
-  ├── agenticpd-stage-b    ← 阶段 B：Trial / Checkpoint / Artifact 数据层
-  ├── agenticpd-stage-c    ← 阶段 C：重构 ORFS Adapter 与执行后端
-  ├── agenticpd-stage-d    ← 阶段 D：扩展 observation 与非 Agent baseline
-  ├── agenticpd-stage-e    ← 阶段 E：AgenticPD 改造为可替换策略
-  ├── agenticpd-stage-f    ← 阶段 F：GWTW Population Scheduler
-  ├── agenticpd-stage-g    ← 阶段 G：Doomed Runs 第一版
-  └── agenticpd-stage-h    ← 阶段 H：三部分整合与实验
-```
+## 2. 阶段与分支
 
-### 1.1 分支纪律
+- A–H 每阶段使用独立 `agenticpd-stage-<letter>` 分支，从 main 或已 merge 的上一阶段创建；单分支不得混入其他阶段。
+- 重大范围、架构或实验口径变更必须先由 Codex 说明方案并取得用户确认。
 
-- 每个阶段从 `main`（或上一阶段的 merge 结果）开出新分支 `agenticpd-stage-<letter>`。
-- 一个分支只做一个阶段的事。不在阶段 A 分支上写阶段 B 的代码。
-- 分支上所有的新增文件、注释、README 用中文；可变代码（变量名、函数名、类名、命令）保持英文。
-- 阶段全部核实完成 → 把注释和文档翻译成英文 → merge 到 `main`。
-- merge 之后才从新 `main` 开下一阶段分支。不把多个阶段堆在同一个分支上。
+## 3. 阶段计划与验收记录
 
-### 1.2 中文→英文翻译规则
+- 所有阶段 Plan 统一存放在 `docs/plan/`；每个 A–H 阶段必须先有对应计划，才可开始实施。
+- 文件名固定为 `stage-<letter>.plan.md`，例如 `stage-a.plan.md`；不得以日期、分支名或临时名称替代。
+- Plan 至少写明：目标、范围/非目标、实现步骤、交付物、测试与验收标准、风险与依赖；内容使用中文。
+- 每个 Plan 的“验收标准”和阶段结束的“验收状态”必须使用 `docs/阶段验收门模板.md`，不得自行省略其中任一适用验收门。
+- 阶段分支 merge 到 main 后，在同一 Plan 末尾追加“验收状态”，记录 merge commit、验证命令及结果、遗留风险或明确的无遗留结论；不得另建验收文件替代。
+- 未完成 Plan、未补验收状态的阶段，不得开始下一阶段。
 
-翻译只针对注释和文档，不碰代码：
+## 4. 语言规则
 
-| 需要翻译 | 不需要翻译 |
-|----------|-----------|
-| 模块/类/函数的 docstring | 变量名、函数名、类名 |
-| 行内注释（`# ...`） | 字符串常量中的 EDA 术语（如 `"WNS"`） |
-| README.md 正文 | 命令行参数名、配置键 |
-| AGENTS.md / CLAUDE.md / docs/ 下的文档 | 测试用例中的 EDA 专用名词 |
+- 项目内所有 Markdown（`.md`）文件必须使用中文，包括 `README.md`、`docs/`、`goals/`、Plan 与注释性 Markdown 内容。
+- 除 Markdown 外，所有文件内容必须使用英文，包括代码注释、docstring、配置说明、CLI 输出和测试描述；代码标识符及命令始终使用英文。
 
-翻译后整个项目除了 `README.md` 之外不得有中文字符。README.md 保留中文。
-翻译完成后先跑 `make test` 确保不破坏功能，再 merge。
+## 5. 边界与实验契约
 
----
+- `configs/experiments/` 存可审阅实验声明；`docs/` 存契约和决策；`tests/` 是无 EDA/LLM/网络的纯 Python 测试；fixtures 只读。
+- `schemas/`、`managers/`、`orfs/` 是可替换边界；不得把阶段 B 之后职责继续堆入 `main.py`。
+- `runs/` 是临时产物，不能作为唯一实验记录；路径由项目根和配置推导，禁止硬编码用户目录。
+- Trial ID：`<experiment>-<platform>-<design>-s<seed>-<sequence>`；`agenticpd_iter<N>` 仅作 legacy 回归证据。
+- 真实实验须有 `configs/experiments/<name>.yaml`，记录参数空间版本、evaluator、预算、seed 与 design 角色。
+- QoR 原始来源只能是 ORFS 报告；Agent 文本和中间 stage 指标不能替代 post-route 最终评价。
+- 真实运行前刷新 `environment_manifest.json`；关键 revision 为 unresolved 时，运行不得用于正式 QoR 对比。
+- 修改参数空间、QoR comparator 或 ORFS 命令语义前，先更新 `docs/experiment-contract.md`。
 
-## 2. 当前阶段边界
+## 6. 安全与验收门
 
-- 当前为阶段 A：冻结 Demo、建立纯 Python 回归检查与实验契约。
-- 不修改 ../Makefile、../designs/、../platforms/、../tools/，也不修改 ORFS evaluator。
-- 不提交真实 EDA 运行产物、.env、API key、绝对路径或 PDK 文件。
-- 阶段 B 之前，不引入 GWTW、Doomed Runs、数据库、Slurm 调度或新的 LLM provider。
+- 不读取、打印、提交或复制 `.env`、token、密钥；日志不得包含密钥、完整请求头或绝对用户路径。
+- 行为 bug 必须先有失败回归测试；注释解释 EDA 语义和设计原因，避免重复显而易见的 Python 语法。
+- 清理 runs 或 ORFS 产物必须显式指定 trial，禁止递归删除宽泛目录。
+- 每次待验收改动至少运行 `make test`；真实 smoke run 只能补充验证，不能替代测试。
+- 每个阶段结束前，Codex 必须按 `docs/阶段验收门模板.md` 明确告知用户“无需真实实验”或“需要用户真实实验”；后者须给出原因、配置、命令、预期证据与通过标准，并在获得结果前不得判定阶段验收完成。
 
----
+## 7. 审查结论输出协议
 
-## 3. 目录职责
-
-| 路径 | 职责 |
-|------|------|
-| AGENTS.md | 本文件；与 CLAUDE.md 内容完全一致，供不同 AI 工具读取 |
-| CLAUDE.md | 与 AGENTS.md 内容完全一致 |
-| configs/experiments/ | 可审阅实验声明；一个 YAML 对应一个可比较的实验设定 |
-| docs/ | 不随运行变化的契约、设计决策和操作说明 |
-| scripts/ | 可直接执行的辅助脚本；优先只依赖 Python 标准库 |
-| tests/ | 不启动 ORFS 的纯 Python 测试与小型真实回归夹具 |
-| tests/fixtures/legacy_run/ | 20260718 Demo 的只读最小证据，测试禁止写入 |
-| runs/ | 真实 trial 临时产物；已被 Git 忽略，不能作为唯一实验记录 |
-| environment_manifest.json | 脚本生成的版本快照；只记录变量名，不记录值、密钥或绝对路径 |
-
----
-
-## 4. 实验与命名规则
-
-- 新 Trial 的逻辑 ID 使用 `<experiment>-<platform>-<design>-s<seed>-<sequence>`；
-  legacy Demo 的 `agenticpd_iter<N>` 保留原名，只作为回归证据。
-- 每次真实实验必须有 `configs/experiments/<name>.yaml`，并记录参数空间版本、evaluator、
-  预算、seed 与 design 角色（smoke/development/held-out）。
-- 一个实验只能有一个明确 evaluator；QoR 原始来源必须是 ORFS 报告，不能由 Agent 文本替代。
-- 真实运行前必须刷新 `environment_manifest.json`。若 ORFS、OpenROAD 或 PDK revision
-  无法识别，manifest 必须明确写为 unresolved，该运行不得用于正式 QoR 对比。
-
----
-
-## 5. 安全与可复现性
-
-- `.env` 只保存本机环境变量；不可读取、打印、提交或复制其中的值。
-- 日志可以记录命令、退出码、耗时、QoR 与版本；不得记录 token、完整 API 请求头或密钥。
-- 路径必须由项目根和配置推导，不在 Python 代码或 YAML 中写用户目录。
-- `tests/fixtures/` 中的文件是只读输入；测试使用临时目录，禁止回写夹具。
-- 需要改变 parameter space、QoR comparator 或 ORFS 命令语义时，先更新
-  `docs/experiment-contract.md`，再改实现和测试。
-
----
-
-## 6. 验证门
-
-每次提交至少执行：
-
-    make test
-    python3 scripts/generate_environment_manifest.py --output environment_manifest.json
-
-测试不得依赖网络、LLM、OpenROAD、PDK 或已有 runs/。真实 smoke run 是额外验证，
-不能替代单元测试。
-
----
-
-## 7. 修改纪律
-
-- 优先新增可替换模块和测试；不要在 main.py 中继续堆叠阶段 B 以后的职责。
-- 对行为有影响的 bug，先添加会失败的回归测试，再修复。
-- 开发期注释和文档用中文；阶段结束翻译为英文后再 merge。
-- 显而易见的 Python 语法不重复注释——注释解释 EDA 语义和设计原因。
-- 清理 `runs/`、ORFS `results/`/`logs/`/`reports/`/`objects/` 时必须显式指定 trial，
-  不得递归删除宽泛目录。
-
----
-
-## 8. AGENTS.md 与 CLAUDE.md 同步规则
-
-- 两个文件内容完全一致，随时保持同步。
-- 修改时先改 AGENTS.md，再复制为 CLAUDE.md。
-- 如发现两个文件不一致，以 AGENTS.md 为准。
+- 每次代码审查、测试验收或阶段复审均按“给用户 / 给 Claude / 需要用户做”三部分输出；结论先行。
+- **给用户**：详细列出已通过与未通过的验收门、证据、影响、准入结论和需要修改的内容。
+- **给 Claude**：仅列 `严重度 | 文件:行号或命令 | 最小修复建议`；不重复背景、不写方案推导，便于直接复制并节省 token。
+- **需要用户做**：只列无法由 Codex/Claude 完成的动作，例如真实实验、外部环境确认或红线授权；给出命令、预期证据和通过标准。
+- 若某部分没有事项，明确写“无”；不得把 mock、单元测试或推断结果写成用户已完成的真实实验。

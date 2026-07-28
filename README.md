@@ -256,7 +256,7 @@ $$
 | 文件 | 行数 | 职责 |
 |------|------|------|
 | `tools/clean.py` | 224 | **产物清理**。删除指定 platform/design 的所有 variant（除 base）+ 匹配的 runs/ 会话目录。`--dry-run` 预览、`--yes` 跳过确认 |
-| `tools/visualize.py` | 384 | **优化树可视化**。从 `tree.json` + `history.json` 生成 PNG（5 层布局，绿色基线路径 + 红色最佳路径） |
+| `tools/visualize.py` | 384 | **优化树可视化**。从 `tree.json` + `trials.jsonl`（兼容旧 `history.json`）生成 PNG（5 层布局，绿色基线路径 + 红色最佳路径） |
 | `tools/trial_inspect.py` | 291 | **Trial 查看器**。`--sessions` / `--list` / `--latest` / `--failed` + `<platform> <design> [seq]`，或 `<trial_id>` 按 ID 全局搜索 |
 
 ### 2.7 configs/ — 实验配置
@@ -293,7 +293,7 @@ $$
 | 目录 | 职责 |
 |------|------|
 | `attachments/` | 文档用图片（架构图、优化树截图） |
-| `runs/` | 运行产物（不进 git）。每个 `main.py` 调用创建一个 `<时间戳>/` 会话目录，内含 `trials.jsonl`（索引）、`<trial_id>/trial.json`（TrialRecord）、`agenticpd.log`、`history.json`、`tree.json`。`clean.py` 可一键清理 |
+| `runs/` | 运行产物（不进 git）。每个 `main.py` 调用创建一个 `<时间戳>/` 会话目录，内含 `trials.jsonl`（主索引）、`<trial_id>/trial.json`（TrialRecord）、`agenticpd.log`、`tree.json`。`history.json` 仅兼容旧工具，`clean.py` 可一键清理 |
 
 ## 3. 环境准备
 
@@ -512,8 +512,11 @@ python3 agenticpd/tools/visualize.py agenticpd/runs/<session>
 }
 ```
 
-tree.json 与 history.json 每轮结束后由 `Optimizer._persist()` 同时原子落盘
-（先写 `.tmp` 再 `os.replace`，中途崩溃不会损坏旧文件）。
+tree.json 每轮结束后由 `Optimizer._persist()` 原子落盘（先写 `.tmp` 再
+`os.replace`，中途崩溃不会损坏旧文件）。trial 数据通过 `TrialManager` 写入
+`trials.jsonl`（全局 append-only 索引）和各 trial 目录下的 `trial.json`。
+`history.json` 仅为兼容旧版可视化/分析工具保留的派生格式（从 `trials.jsonl`
+重建），不再作为主存储。
 树节点仅在迭代成功时挂载（失败轮产物不完整、不可作为未来分支起点）。
 
 ---
@@ -611,7 +614,7 @@ tree.json 与 history.json 每轮结束后由 `Optimizer._persist()` 同时原�
 ### 9.4 信息流总览（一轮迭代，与论文 §6 伪代码逐行对照）
 
 ```
-tree.json + history.json（Optimizer 维护，每轮结束原子落盘）
+tree.json + trials.jsonl（TrialManager 维护 trials.jsonl 主索引，tree.json 每轮原子落盘）
    │
    ├─→ ObservationTool（纯计算）：
    │     E(n) ← tree.branchable_nodes()     B(s) ← compute_stage_bottleneck()
@@ -709,7 +712,7 @@ CLI 参数（`--iterations`、`--design`、`--platform`、`--timeout`、`--wns-t
 - 5 层布局（root → FP → PL → CTS → RT），层内按迭代号左小右大排列
 - 圆圈节点，标注 `迭代号_阶段`（如 `0_FP`、`2_CTS`）、root 标注 `Root`
 - **绿色粗箭头**：基线路径（root→iter0_FP→iter0_PL→iter0_CTS→iter0_RT）
-- **红色粗箭头**：最佳路径（从 history.json QoR 自动找出最优迭代，回溯整条路径）
+- **红色粗箭头**：最佳路径（从 trials.jsonl 自动找出最优 QoR 迭代，回溯整条路径）
 - 灰色细箭头：其余普通边
 - 最佳与基线重合时自动跳过绿色避免重叠，图例标注 `= baseline`
 - 图片尺寸随节点数动态调整，150 DPI

@@ -26,9 +26,17 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
+
+# When run directly (python3 managers/trial_manager.py), ensure the parent
+# agenticpd/ directory is on sys.path so relative imports resolve.
+if __name__ == "__main__":
+    _parent = Path(__file__).resolve().parent.parent
+    if str(_parent) not in sys.path:
+        sys.path.insert(0, str(_parent))
 
 from schemas.trial import TrialRecord, StageResult, CheckpointRef, FailureClass
 from schemas.trial import append_trial_to_jsonl, load_trials_from_jsonl
@@ -122,9 +130,11 @@ class TrialManager:
         (see create()), so we scan for directories whose name ends with the
         trial ID rather than assuming a flat layout.
         """
-        # Scan for iter-{N}-{trial_id} directories
+        # Scan iter-{N}-{trial_id} directories; also accept legacy bare trial_id names
         for d in sorted(self.runs_dir.iterdir()):
-            if not d.is_dir() or not d.name.endswith(f"-{trial_id}"):
+            if not d.is_dir():
+                continue
+            if not (d.name.endswith(f"-{trial_id}") or d.name == trial_id):
                 continue
             trial_json = d / "trial.json"
             if not trial_json.is_file():
@@ -182,7 +192,6 @@ class TrialManager:
 
 if __name__ == "__main__":
     import shutil
-    import sys
     import tempfile
 
     ok = 0
@@ -205,7 +214,7 @@ if __name__ == "__main__":
     check(t1.status == "running", "create: status=running")
     check(t1.trial_id is not None and len(t1.trial_id) == 8, "create: 8-char trial_id")
     check(t1.start_time is not None, "create: start_time set")
-    check((runs_dir / t1.trial_id / "trial.json").is_file(), "create: trial.json exists")
+    check((Path(t1.artifact_dir) / "trial.json").is_file(), "create: trial.json exists")
 
     # -- Get --
     t1_loaded = mgr.get(t1.trial_id)
