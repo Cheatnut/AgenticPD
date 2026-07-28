@@ -19,16 +19,22 @@ from managers import TrialManager
 from managers import CheckpointManager
 
 # ---- Config ----
-RUNS_DIR = Path("/home/cheatnut/OpenROAD-flow-scripts/flow/agenticpd/runs")
-FLOW_DIR = Path("/home/cheatnut/OpenROAD-flow-scripts/flow")
+# Derive paths from script location; NEVER hardcode user home directories
+_PROJECT_DIR = Path(__file__).resolve().parent.parent  # flow/agenticpd/
+FLOW_DIR = _PROJECT_DIR.parent                           # flow/
+RUNS_DIR = _PROJECT_DIR / "runs"
 PLATFORM = "sky130hd"
 DESIGN = "gcd"
 VARIANT = "agenticpd_iter0"
 
-# Find the latest run
-run_dirs = sorted(d for d in RUNS_DIR.iterdir() if d.is_dir() and (d / "history.json").exists())
+# Find the latest run (adapted for Stage C directory layout: runs/<platform>_<design>/<session>/)
+DESIGN_RUNS_DIR = RUNS_DIR / f"{PLATFORM}_{DESIGN}"
+run_dirs = sorted(
+    d for d in DESIGN_RUNS_DIR.iterdir()
+    if d.is_dir() and not d.name.startswith(".") and (d / "history.json").exists()
+)
 if not run_dirs:
-    print("No run with history.json found.")
+    print(f"No run with history.json found under {DESIGN_RUNS_DIR}.")
     sys.exit(1)
 run_dir = run_dirs[-1]
 print(f"Using run: {run_dir.name}")
@@ -113,12 +119,12 @@ trial.checkpoint = cp
 print(f"  Checkpoint: {cp.checkpoint_id} ({len(cp.artifact_manifest)} files)")
 
 # ---- Persist with TrialManager ----
-mgr = TrialManager(run_dir.parent)  # runs/ directory
+mgr = TrialManager(run_dir)  # session directory = trial's runs_dir
 mgr._write_trial(trial)
 print(f"  Trial written to {trial.artifact_dir}/trial.json")
 
 # ---- Save as test fixture ----
-fixture_dir = Path("/home/cheatnut/OpenROAD-flow-scripts/flow/agenticpd/tests/fixtures/stage_b")
+fixture_dir = _PROJECT_DIR / "tests" / "fixtures" / "stage_b"
 fixture_dir.mkdir(parents=True, exist_ok=True)
 
 # Save trial.json
@@ -148,7 +154,7 @@ failed_trial = TrialRecord(
         StageResult("RT", "skipped", 0.0),
         StageResult("finish", "skipped", 0.0),
     ],
-    artifact_dir=str(run_dir.parent / "fixture-gcd-002"),
+    artifact_dir=str(run_dir / "fixture-gcd-002"),
 )
 failed_json = fixture_dir / "failed_trial.json"
 failed_json.write_text(json.dumps(failed_trial.to_dict(), ensure_ascii=False, indent=2))

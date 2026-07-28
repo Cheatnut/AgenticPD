@@ -194,8 +194,11 @@ def main() -> None:
     print(f"  Reproduced QoR: {_format_qor(result.qor.to_dict() if result.qor else None)}")
 
     if result.qor and trial.final_qor:
+        # qor_is_better() expects QoR objects, not plain dicts
+        recorded_qor = QoR.from_dict(trial.final_qor)
+        actual_qor = result.qor
         recorded = trial.final_qor
-        actual = result.qor.to_dict()
+        actual = actual_qor.to_dict()
         # Compute deltas
         for key, label in [("wns_ps", "WNS"), ("tns_ps", "TNS"),
                            ("area_um2", "Area"), ("power_w", "Power")]:
@@ -204,9 +207,9 @@ def main() -> None:
             if old_v is not None and new_v is not None:
                 delta = new_v - old_v
                 print(f"  Δ{label}: {delta:+.2f}")
-        if qor_is_better(actual, recorded):
+        if qor_is_better(actual_qor, recorded_qor):
             print("  → Reproduced result is BETTER than the original.")
-        elif qor_is_better(recorded, actual):
+        elif qor_is_better(recorded_qor, actual_qor):
             print("  → Reproduced result is WORSE than the original "
                   "(expected within tolerance).")
         else:

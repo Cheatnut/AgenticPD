@@ -134,12 +134,19 @@ def _print_trial(trial: TrialRecord, show_stages: bool = False) -> None:
     # Q6: QoR
     if trial.final_qor:
         q = trial.final_qor
+        # Guard against None values — dict.get() returns None (not the default)
+        # when the key exists but maps to None
+        def _fmt(key: str, unit: str, spec: str) -> str:
+            v = q.get(key)
+            if v is None:
+                return f"{'?':>{spec}} {unit}"
+            return f"{v:{spec}} {unit}"
         print(f"  QoR:")
-        print(f"    WNS:  {q.get('wns_ps', '?'):>10.1f} ps")
-        print(f"    TNS:  {q.get('tns_ps', '?'):>10.1f} ps")
-        print(f"    Area: {q.get('area_um2', '?'):>10.1f} um2")
+        print(f"    WNS:  {_fmt('wns_ps', 'ps', '>10.1f')}")
+        print(f"    TNS:  {_fmt('tns_ps', 'ps', '>10.1f')}")
+        print(f"    Area: {_fmt('area_um2', 'um2', '>10.1f')}")
         power_w = q.get("power_w")
-        if power_w:
+        if power_w is not None:
             print(f"    Power:{power_w*1000:>10.4f} mW")
     print()
 

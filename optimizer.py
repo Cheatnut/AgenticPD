@@ -17,8 +17,8 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import config
-from agents import (JudgeAgent, StageAgent, build_observation_summary,
-                    build_stage_agents, default_stage_params)
+from agents import (JudgeAgent, build_observation_summary,
+                    build_stage_agents)
 from config import FrameworkConfig
 from optimization_tree import (OptimizationTree, ROOT_ID,
                                load_tree, save_tree_atomic)
@@ -108,7 +108,7 @@ class Optimizer:
         self.best_idx: Optional[int] = None
 
         # Stage C6: TrialManager for structured trial recording
-        self.trial_mgr = TrialManager(cfg.run_dir if cfg.run_dir else Path("runs"))
+        self.trial_mgr = TrialManager(cfg.run_dir if cfg.run_dir else config.RUNS_DIR)
         self._current_trial: Optional[TrialRecord] = None
         self._parent_trial_id: Optional[str] = None
 
@@ -147,7 +147,7 @@ class Optimizer:
             snap = self.cfg.run_dir / "config_snapshot.json"
             if snap.is_file():
                 config_hash = hashlib.sha256(snap.read_bytes()).hexdigest()[:16]
-            env_manifest = self.cfg.flow_dir / "agenticpd" / "environment_manifest.json"
+            env_manifest = config.AGENTICPD_DIR / "environment_manifest.json"
             if env_manifest.is_file():
                 env_hash = hashlib.sha256(env_manifest.read_bytes()).hexdigest()[:16]
         trial = self.trial_mgr.create(

@@ -61,8 +61,8 @@
 
 | 文件 | 行数 | 职责 |
 |------|------|------|
-| `tools/clean.py` | 224 | **产物清理**。删除指定 platform/design 的所有 variant（除 base）+ 匹配的 runs/ 会话目录。`--mock-llm` 预览、`--yes` 跳过确认 |
-| `tools/visualize.py` | 384 | **优化树可视化**。从 `tree.json` + `history.json` 生成 PNG（5 层布局，绿色基线路径 + 红色最佳路径） |
+| `tools/clean.py` | 224 | **产物清理**。删除指定 platform/design 的所有 variant（除 base）+ 匹配的 runs/ 会话目录。`--dry-run` 预览、`--yes` 跳过确认 |
+| `tools/visualize.py` | 384 | **优化树可视化**。从 `tree.json` + `trials.jsonl`（兼容旧 `history.json`）生成 PNG（5 层布局，绿色基线路径 + 红色最佳路径） |
 | `tools/trial_reproduce.py` | — | **Trial 复现**。从 TrialRecord 提取完整参数重跑 ORFS，对比原始/复现 QoR。`--list` / `<trial_id>` `--runs-dir` |
 | `tools/trial_inspect.py` | 291 | **Trial 查看器**。`--sessions` / `--list` / `--latest` / `--failed` + `<platform> <design> [seq]`，或 `<trial_id>` 按 ID 全局搜索 |
 

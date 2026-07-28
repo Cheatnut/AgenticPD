@@ -116,16 +116,26 @@ class TrialManager:
     # ------------------------------------------------------------------
 
     def get(self, trial_id: str) -> Optional[TrialRecord]:
-        """Load a single trial by ID from its trial.json."""
-        trial_json = self.runs_dir / trial_id / "trial.json"
-        if not trial_json.is_file():
-            return None
-        try:
-            data = json.loads(trial_json.read_text(encoding="utf-8"))
-            return TrialRecord.from_dict(data)
-        except (json.JSONDecodeError, KeyError, ValueError) as e:
-            log.warning("Corrupt trial.json for %s: %s", trial_id, e)
-            return None
+        """Load a single trial by ID from its trial.json.
+
+        Trial directories use the naming convention iter-{N}-{trial_id}
+        (see create()), so we scan for directories whose name ends with the
+        trial ID rather than assuming a flat layout.
+        """
+        # Scan for iter-{N}-{trial_id} directories
+        for d in sorted(self.runs_dir.iterdir()):
+            if not d.is_dir() or not d.name.endswith(f"-{trial_id}"):
+                continue
+            trial_json = d / "trial.json"
+            if not trial_json.is_file():
+                continue
+            try:
+                data = json.loads(trial_json.read_text(encoding="utf-8"))
+                return TrialRecord.from_dict(data)
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                log.warning("Corrupt trial.json for %s: %s", trial_id, e)
+                return None
+        return None
 
     def list_all(self) -> List[TrialRecord]:
         """Return every trial from the JSONL index (fast, no directory walk)."""

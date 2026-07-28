@@ -100,7 +100,7 @@ def build_observation_summary(tree, history: List[Dict[str, Any]],
     parts += ["\n### Stage Bottleneck B(s) (ws gap vs. global best; larger positive = more bottlenecked)"]
     for stage in config.STAGES:
         parts.append(f"- {stage} ({STAGE_CN[stage]}): B={bottleneck[stage]:.1f} ps")
-    if best_qor is not None:
+    if best_qor is not None and best_qor.wns_ps is not None:
         parts.append(f"\nGlobal best ws (reference baseline): {best_qor.wns_ps:.1f} ps")
 
     return "\n".join(parts)

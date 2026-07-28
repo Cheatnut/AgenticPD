@@ -217,7 +217,7 @@ $$
 
 | 文件 | 行数 | 职责 |
 |------|------|------|
-| `main.py` | 208 | CLI 入口：`--baseline-only` / `--dry-run` / `--resume` / `--iterations N`，初始化 LLM/Runner/Optimizer，启动优化循环 |
+| `main.py` | 208 | CLI 入口：`--baseline-only` / `--mock-llm` / `--resume` / `--iterations N`，初始化 LLM/Runner/Optimizer，启动优化循环 |
 | `config.py` | 361 | **全局配置唯一来源**。定义 9 个可调参数（`ParamSpec`，含类型/范围/默认值/影响阶段）、`FrameworkConfig`（路径/超参/LLM 设置）、全局路径常量 |
 | `optimizer.py` | 501 | **优化主循环**。实现论文 §6 伪代码：建树 → ObservationTool → Judge 决策 → 分支 → 逐阶段流水线 → 记录历史。阶段 C 接入 `TrialManager` |
 | `agents.py` | 573 | **Agent 层**。`JudgeAgent`（全局导航，选分支节点和阶段）、`StageAgent ×4`（FP/PL/CTS/RT 各阶段参数生成）、`ObservationTool`（计算 E(n) 探索平衡度 + B(s) 阶段瓶颈） |
@@ -248,8 +248,8 @@ $$
 
 | 文件 | 行数 | 职责 |
 |------|------|------|
-| `trial_manager.py` | 263 | **Trial 生命周期管理**。`TrialManager`：`create()` 生成 UUID + 写入 `runs/<id>/trial.json`；`update()` 覆盖 + 追加 `trials.jsonl` 索引；`get/list_all/list_by_status/latest` 查询。原子写入（.tmp → os.replace） |
-| `checkpoint_manager.py` | 392 | **Checkpoint 生命周期管理**。`CheckpointManager`：`create()` 扫描 ORFS 产物 + SHA-256 哈希 → `CheckpointRef`；`verify()` 完整性校验；`is_compatible()` 基于 `ParameterSpec.affects` 的阶段感知兼容性判断；`param_hash()` 确定性参数哈希 |
+| `managers/trial_manager.py` | 263 | **Trial 生命周期管理**。`TrialManager`：`create()` 生成 UUID + 写入 `runs/<id>/trial.json`；`update()` 覆盖 + 追加 `trials.jsonl` 索引；`get/list_all/list_by_status/latest` 查询。原子写入（.tmp → os.replace） |
+| `managers/checkpoint_manager.py` | 392 | **Checkpoint 生命周期管理**。`CheckpointManager`：`create()` 扫描 ORFS 产物 + SHA-256 哈希 → `CheckpointRef`；`verify()` 完整性校验；`is_compatible()` 基于 `ParameterSpec.affects` 的阶段感知兼容性判断；`param_hash()` 确定性参数哈希 |
 
 ### 2.6 tools/ — CLI 工具
 
@@ -336,10 +336,10 @@ python3 agenticpd/main.py --resume latest
 # ---- 调试模式（零 token / 零 EDA）----
 
 # 全 mock：MockLLM + MockORFS，秒级跑完，验证控制逻辑
-python3 agenticpd/main.py --dry-run --mock-orfs --iterations 5
+python3 agenticpd/main.py --mock-llm --mock-orfs --iterations 5
 
 # MockLLM + 真实 ORFS：LLM 不花钱，但会真实跑 EDA 流程
-python3 agenticpd/main.py --dry-run --iterations 2
+python3 agenticpd/main.py --mock-llm --iterations 2
 
 # ---- 工具 ----
 

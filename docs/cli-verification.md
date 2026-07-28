@@ -10,13 +10,11 @@
 # 1. 全 mock 优化，3 轮迭代
 python3 ./main.py --mock-llm --mock-orfs --design gcd --iterations 3
 
-# 2. 列出最新会话的所有 trial
-python3 tools/trial_inspect.py --list \
-  --runs-dir runs/sky130hd_gcd/$(ls -t runs/sky130hd_gcd/ | head -1)
+# 2. 列出最新会话的所有 trial（自动取最新 session）
+python3 tools/trial_inspect.py --list sky130hd gcd
 
-# 3. 查看某个 trial 的完整细节（含 per-stage）
-python3 tools/trial_inspect.py <trial-id> --stages \
-  --runs-dir runs/sky130hd_gcd/$(ls -t runs/sky130hd_gcd/ | head -1)
+# 3. 查看某个 trial 的完整细节（含 per-stage）— 全局搜索，无需指定会话
+python3 tools/trial_inspect.py <trial-id> --stages
 
 # 4. 预览清理范围（--dry-run，不删任何东西）
 python3 tools/clean.py sky130hd gcd --dry-run
@@ -54,11 +52,12 @@ python3 tools/clean.py sky130hd gcd --yes
 
 | # | 命令 | 功能 | 预期现象 |
 |---|------|------|---------|
-| 7 | `--list --runs-dir <会话目录>` | 列出某次会话的全部 trial | 表格：Trial ID / Status / QoR / Elapsed。旧 trial 显示 `[no params]`。 |
-| 8 | `<trial_id> --runs-dir <会话>` | 查看单个 trial 详情 | 显示 parent lineage / param_diff / elapsed / 各阶段摘要 / QoR。 |
-| 9 | `<trial_id> --stages --runs-dir <会话>` | 加 per-stage 明细 | 以上内容 + 每个阶段的 status / 耗时 / 中间时序值。 |
-| 10 | `--latest --runs-dir <会话>` | 最新 trial | 同上（#8），自动定位到最近一个 trial。 |
-| 11 | `--failed --runs-dir <会话>` | 只看失败的 trial | 只显示 status=failed 的 trial。mock 模式不会产生失败。 |
+| 7 | `--list <platform> <design> [seq]` | 列出某次会话的全部 trial（seq 省略则取最新） | 表格：Trial ID / Status / QoR / Elapsed。旧 trial 显示 `[no params]`。 |
+| 8 | `<trial_id>` | 按 ID 全局搜索，查看单个 trial 详情 | 自动扫描所有会话，显示 parent lineage / param_diff / elapsed / QoR。 |
+| 9 | `<trial_id> --stages` | 加 per-stage 明细 | 以上内容 + 每个阶段的 status / 耗时 / 中间时序值。 |
+| 10 | `--latest <platform> <design>` | 最新会话中的最新 trial | 同上（#8），自动定位。 |
+| 11 | `--failed <platform> <design>` | 跨所有会话列出失败 trial | 只显示 status=failed 的 trial。mock 模式不会产生失败。 |
+| 11b | `--sessions <platform> <design>` | 列出某设计的所有会话 | 显示会话目录名 + 每个会话的 trial 数。 |
 
 ### tools/trial_reproduce.py — Trial 复现
 
@@ -85,7 +84,7 @@ python3 tools/clean.py sky130hd gcd --yes
 
 | # | 命令 | 功能 | 预期现象 |
 |---|------|------|---------|
-| 18 | `python3 schemas/trial.py` | 运行内置自测 | `20/20 passed — ALL OK`。纯 Python，零依赖。 |
+| 18 | `python3 schemas/trial.py` | 运行内置自测 | `ALL OK`。纯 Python，零依赖。 |
 
 ### make test — 完整测试套件
 
@@ -102,7 +101,7 @@ runs/
   sky130hd_gcd/
     .baseline/
       trial.json                     ← 共享基线缓存
-    20260727_230000/                 ← 第一次实验
+    001_20260727_230000/             ← 第一次实验（序号 _ 时间戳）
       iter-1-xxxxxxxx/               ← 第一轮优化
         trial.json
       iter-2-yyyyyyyy/
@@ -112,8 +111,11 @@ runs/
       optimization_tree.png
       agenticpd.log
       config_snapshot.json
-    20260727_231500/                 ← 第二次实验（基线缓存命中）
+    002_20260727_231500/             ← 第二次实验（基线缓存命中）
       iter-1-zzzzzzzz/               ← 从 iter-1 开始（无 iter-0）
         trial.json
       ...
 ```
+
+> **说明**：会话目录使用 `NNN_YYYYMMDD_HHMMSS` 格式，序号从 001 开始递增。
+> 快速验证命令中 `ls -t runs/sky130hd_gcd/ | head -1` 会取到最新（修改时间最近）的会话。

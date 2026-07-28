@@ -107,6 +107,8 @@ class LLMClient:
                     messages=messages,
                     temperature=self.cfg.llm_temperature,
                 )
+                if not resp.choices:
+                    raise LLMError(f"[{tag}] API returned empty choices list")
                 content = resp.choices[0].message.content
                 if content is None:
                     raise LLMError(f"[{tag}] API returned empty content")
