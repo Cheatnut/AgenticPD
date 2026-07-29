@@ -5,7 +5,7 @@ description: 对 AgenticPD 进行代码审查、PR 审查、代码检查或质�
 
 # AgenticPD 代码审查
 
-执行前读取当前 `AGENTS.md` 与 `CLAUDE.md`；它们优先于本技能。Codex 只负责扫描、报告与验收，Claude 负责修复。本技能不得创建或修改 `docs/plan/` 中的 Plan。
+执行前读取当前 `AGENTS.md` 与 `CLAUDE.md`；它们优先于本技能。Codex 只负责扫描、报告与验收，Claude 负责修复。本技能不得创建或修改 `docs/plans/` 中的 Plan。
 
 ## 工作流
 
@@ -67,7 +67,7 @@ rg -n 'branch_from|orfs_interface|history\.json' --glob '*.py' --glob '*.md' .
 
 - 对照实际 argparse `--help` 与 `README.md`、`docs/` 中的命令示例；不可执行的示例为 P0。
 - 检查文档引用的文件、目录和模块是否存在；不存在为 P1。检查数据流、trial 存储、目录职责与实际实现是否一致；不一致为 P1。
-- 检查当前阶段有 `docs/plan/stage-<letter>.plan.md`，并确认 Plan 的范围、交付物和验收状态与分支/实现一致；缺失或矛盾为 P1。
+- 检查当前阶段有 `docs/plans/stage-<letter>.plan.md`，并确认 Plan 的范围、交付物和验收状态与分支/实现一致；缺失或矛盾为 P1。
 - `AGENTS.md` 与 `CLAUDE.md` 分属 Planner/Checker 与 Executor，内容不同是预期行为；只检查各自职责、共享实验契约和语言规则是否矛盾。
 
 ```bash

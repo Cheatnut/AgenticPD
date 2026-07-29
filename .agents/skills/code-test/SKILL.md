@@ -45,7 +45,7 @@ python3 tools/clean.py --help
 ## 结果判定
 
 - P0：`make test`、`schemas/trial.py` 或任一必跑 CLI `--help` 非零退出；测试启动真实 LLM/ORFS/网络；验证命令写入或删除非临时项目产物。
-- P1：测试发现为 0、关键测试文件缺失、测试声明的隔离边界与实际行为不符，或 CLI 帮助接口与 `docs/cli-verification.md` 的零副作用命令不一致。
+- P1：测试发现为 0、关键测试文件缺失、测试声明的隔离边界与实际行为不符，或 CLI 帮助接口与 `docs/usage/cli-verification.md` 的零副作用命令不一致。
 - P2：测试输出噪声、断言信息不足、运行时间异常但仍通过，或可改善的覆盖建议。
 - 通过：所有必跑命令退出码为 0，`make test` 显示 `OK`，且未启动被禁止的外部服务或 flow。
 
