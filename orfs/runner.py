@@ -65,6 +65,76 @@ def tail_log(path: Path, lines: int = 20) -> str:
         return "(unable to read make log)"
 
 
+def _relativize_cmd_arg(arg: str, cfg: "FrameworkConfig") -> str:
+    """Convert an absolute project-root path in a make command argument
+    to a relative form for safe persistence in StageResult.command.
+
+    Covers three patterns:
+      - ``-C <flow_dir>``        → ``-C .`` (make cwd is flow_dir)
+      - ``KEY=<project>/...``    → ``KEY=<relative>`` (FASTROUTE_TCL, etc.)
+      - ``<project_root>/...``   → ``<relative>``
+    Uses the ORFS repo root (flow_dir.parent) to catch tools/ paths too.
+    """
+    project_root = cfg.flow_dir.parent
+    arg_path = Path(arg)
+    run_dir = cfg.run_dir
+    if arg_path.is_absolute():
+        if arg == str(cfg.flow_dir):
+            return "."  # -C argument
+        if run_dir and arg_path.is_relative_to(run_dir):
+            return str(arg_path.relative_to(run_dir))
+        if arg_path.is_relative_to(cfg.flow_dir):
+            return str(arg_path.relative_to(cfg.flow_dir))
+        if arg_path.is_relative_to(project_root):
+            return str(arg_path.relative_to(project_root))
+    # Handle KEY=<absolute_path> patterns
+    if "=" in arg:
+        key, val = arg.split("=", 1)
+        val_path = Path(val)
+        if val_path.is_absolute():
+            try:
+                if run_dir and val_path.is_relative_to(run_dir):
+                    return f"{key}={val_path.relative_to(run_dir)}"
+                if val_path.is_relative_to(cfg.flow_dir):
+                    return f"{key}={val_path.relative_to(cfg.flow_dir)}"
+                if val_path.is_relative_to(project_root):
+                    return f"{key}={val_path.relative_to(project_root)}"
+            except ValueError:
+                pass
+    return arg
+
+
+def sanitize_make_log(log_path: Path, cfg: "FrameworkConfig") -> None:
+    """Post-process a make log to replace absolute project-root paths.
+
+    ORFS tool output contains absolute paths like
+    ``/home/.../flow/results/...``, ``/home/.../tools/...``, etc.
+    This function replaces occurrences of the entire project root
+    (``cfg.flow_dir.parent``, i.e. the ORFS repo) and ``cfg.run_dir``
+    with stable relative equivalents so the log file can be stored in
+    the session directory without leaking absolute user paths.
+    """
+    if not log_path.is_file():
+        return
+    try:
+        content = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    # Use the ORFS repo root (parent of flow/) to cover flow/, tools/, etc.
+    # Replace run_dir FIRST (more specific), then project_root (broader).
+    project_root = str(cfg.flow_dir.parent)
+    run_str = str(cfg.run_dir) if cfg.run_dir else None
+    modified = False
+    if run_str and run_str in content:
+        content = content.replace(run_str, "${RUN_DIR}")
+        modified = True
+    if project_root in content:
+        content = content.replace(project_root, "${PROJECT_ROOT}")
+        modified = True
+    if modified:
+        log_path.write_text(content, encoding="utf-8", errors="replace")
+
+
 def run_clean_make(cfg: FrameworkConfig, variant: str,
                    clean_target: str) -> None:
     """Run ``make clean_<stage>`` for a single stage cleanup."""
@@ -77,6 +147,7 @@ def run_clean_make(cfg: FrameworkConfig, variant: str,
     assert cfg.run_dir is not None
     log_path = cfg.run_dir / f"clean_{clean_target}.log"
     returncode, _ = run_make(cfg, cmd, log_path)
+    sanitize_make_log(log_path, cfg)
     if returncode != 0:
         log.warning("[ORFS] %s returned %d (non-fatal)", clean_target, returncode)
 
@@ -120,13 +191,22 @@ def execute_stage(
     cmd, log_path = build_make_cmd(
         cfg, stage_params, variant, iteration, target=make_target,
     )
-    log_path_str = str(log_path)
-    cmd_str = " ".join(cmd)
+    # Persist paths relative to their canonical base directories so
+    # trial.json never contains absolute paths (e.g. /home/...).
+    # - log_path:  relative to run_dir
+    # - command:   all project-root paths relativized
+    # - report_path: relative to flow_dir
+    log_path_str = str(log_path.relative_to(cfg.run_dir)) if log_path.is_relative_to(cfg.run_dir) else str(log_path)
+    # Convert any absolute project-root paths in the command to relative form.
+    # This covers -C <flow_dir>, FASTROUTE_TCL=<abs>/fastroute_iterN.tcl, etc.
+    cmd_rel = [_relativize_cmd_arg(arg, cfg) for arg in cmd]
+    cmd_str = " ".join(cmd_rel)
     start_ts = datetime.now(timezone.utc).isoformat()
 
     log.info("#%d [ORFS] make %s...", iteration, make_target)
     start = time.monotonic()
     returncode, timed_out = run_make(cfg, cmd, log_path)
+    sanitize_make_log(log_path, cfg)
     elapsed = time.monotonic() - start
     end_ts = datetime.now(timezone.utc).isoformat()
 
@@ -160,7 +240,8 @@ def execute_stage(
     for rj in report_jsons:
         candidate = reports_base / rj
         if candidate.is_file():
-            report_path = str(candidate)
+            # Store relative to flow_dir (reports_base is flow_dir/reports/...)
+            report_path = str(candidate.relative_to(cfg.flow_dir)) if candidate.is_relative_to(cfg.flow_dir) else str(candidate)
             break
 
     log.info("#%d [ORFS] %s done!(%.1fs)", iteration, stage, elapsed)
@@ -192,6 +273,7 @@ def execute_flow(
     log.info("#%d [ORFS] make all...", iteration)
     start = time.monotonic()
     returncode, timed_out = run_make(cfg, cmd, log_path)
+    sanitize_make_log(log_path, cfg)
     elapsed = time.monotonic() - start
 
     # 2) Parse results
