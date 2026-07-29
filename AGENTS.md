@@ -19,7 +19,7 @@ AgenticPD 是可复现、可审计、可比较的 Flow Optimization 实验平台
 - 验收使用 `docs/阶段验收门模板.md`；merge 到 main 后在同目录 `stage-<letter>-check.md` 记录 commit、命令与结果、遗留风险。
 - 未完成 Plan 或验收报告不得开始下一阶段；重大范围、架构或实验口径变更先说明并获用户确认。
 - 除用户明确要求外，不得创建、修改、移动或删除 `docs/`；`docs/Note.md` 是用户笔记，禁止任何改动。
-- 根目录保留总纲、`WORKFLOW.md`、`阶段验收门模板.md`、`HANDOVER.md` 与 `Note.md`；CLI 在 `docs/usage/`，系统介绍在 `docs/introduction/`。
+- 根目录保留总纲、`阶段验收门模板.md`、`HANDOVER.md` 与 `Note.md`；CLI 在 `docs/usage/`，系统介绍在 `docs/introduction/`。
 - `HANDOVER.md` 是唯一例外：每日结束时覆盖当前阶段、待修复项、验证状态和下一步；次日先加载。
 
 ## 语言、边界与实验
@@ -27,9 +27,9 @@ AgenticPD 是可复现、可审计、可比较的 Flow Optimization 实验平台
 - 所有 `.md` 使用中文；其他文件内容、代码注释、docstring、配置说明、CLI 输出和测试描述使用英文。
 - `configs/experiments/` 存实验声明，`tests/` 是无 EDA/LLM/网络的纯 Python 测试，fixtures 只读；`schemas/`、`managers/`、`orfs/` 是可替换边界。
 - 不得把阶段 B 后职责堆入 `main.py`；路径由项目根、配置或参数推导，禁止硬编码用户目录。
-- `runs/` 是临时产物，不能是唯一实验记录；Trial ID 为 `<experiment>-<platform>-<design>-s<seed>-<sequence>`，`agenticpd_iter<N>` 仅作 legacy 证据。
+- `runs/` 是临时产物，不能是唯一实验记录；当前 Trial ID 是随机 8 位十六进制标识，`agenticpd_iter<N>` 仅作 legacy variant 证据。
 - 真实实验必须有 YAML，记录参数空间、evaluator、预算、seed 和 design 角色；QoR 唯一权威来源是 ORFS post-route 报告。
-- 修改参数空间、QoR comparator 或 ORFS 命令语义前，先获用户授权更新 `docs/introduction/Experiment-contract.md`。
+- 修改参数空间、QoR comparator 或 ORFS 命令语义前，先获用户授权更新 `docs/introduction/实验契约.md`。
 
 ## 安全与验收
 

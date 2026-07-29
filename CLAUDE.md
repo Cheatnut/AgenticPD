@@ -16,9 +16,9 @@ AgenticPD 是可复现、可审计、可比较的 Flow Optimization 实验平台
 
 - 除用户明确要求外，不得创建、修改、移动或删除 `docs/`；不得以同步文档或实现需要为由擅自改动。
 - `docs/Note.md` 是用户笔记，禁止修改、移动或删除；`HANDOVER.md` 是唯一例外，每日结束时覆盖当前阶段、待修复项、验证状态和下一步，次日先加载。
-- 根目录保留总纲、`WORKFLOW.md`、`阶段验收门模板.md`、`HANDOVER.md` 与 `Note.md`；CLI 在 `docs/usage/`，系统介绍在 `docs/introduction/`。
+- 根目录保留总纲、`阶段验收门模板.md`、`HANDOVER.md` 与 `Note.md`；CLI 在 `docs/usage/`，系统介绍在 `docs/introduction/`。
 - 所有 `.md` 使用中文；其他文件内容、代码注释、docstring、配置说明、CLI 输出和测试描述使用英文。
-- 计划验收采用 `docs/阶段验收门模板.md`；修改参数空间、QoR comparator 或 ORFS 命令语义前，先获用户授权更新 `docs/introduction/Experiment-contract.md`。
+- 计划验收采用 `docs/阶段验收门模板.md`；修改参数空间、QoR comparator 或 ORFS 命令语义前，先获用户授权更新 `docs/introduction/实验契约.md`。
 
 ## 编程纪律
 
@@ -31,7 +31,7 @@ AgenticPD 是可复现、可审计、可比较的 Flow Optimization 实验平台
 
 ## 实验、安全与交接
 
-- Trial ID 为 `<experiment>-<platform>-<design>-s<seed>-<sequence>`；`agenticpd_iter<N>` 仅作 legacy 证据；QoR 权威来源是 ORFS 报告。
+- 当前 Trial ID 为随机 8 位十六进制标识；`agenticpd_iter<N>` 仅作 legacy variant 证据；QoR 权威来源是 ORFS 报告。
 - 真实实验必须有 YAML，记录参数空间、evaluator、预算、seed 和 design 角色；真实运行前刷新 `environment_manifest.json`。
 - 不读取、打印、提交或复制 `.env`、token、密钥；日志不得含密钥、完整请求头或绝对用户路径；清理产物必须显式指定 trial。
 - 每次实现后运行 `make test`；测试不得依赖网络、LLM、OpenROAD、PDK 或既有 runs；真实 smoke run 仅作补充。
