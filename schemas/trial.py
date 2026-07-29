@@ -227,7 +227,9 @@ class TrialRecord:
     env_hash: Optional[str] = None              # sha256 of environment_manifest.json
 
     # ---- Artifact location ----
-    artifact_dir: Optional[str] = None           # runs/<trial_id>/
+    # Relative to session runs_dir (e.g. "iter-0-abc12345"), or absolute
+    # for backward-compat / self-test tempdirs.
+    artifact_dir: Optional[str] = None
 
     # ---- Computed convenience fields ----
     @property
@@ -324,6 +326,25 @@ class TrialRecord:
                     if sr.status == "failed" and sr.failure:
                         self.failure = sr.failure
                         break
+
+
+# =============================================================================
+# 4a. Artifact path resolution
+# =============================================================================
+
+def resolve_artifact_dir(artifact_dir: Optional[str],
+                         runs_dir: "Path") -> Optional[Path]:
+    """Resolve artifact_dir to an absolute path.
+
+    If ``artifact_dir`` is already absolute, use as-is (backward compat).
+    Otherwise resolve relative to ``runs_dir`` (the session directory).
+    """
+    if artifact_dir is None:
+        return None
+    p = Path(artifact_dir)
+    if p.is_absolute():
+        return p
+    return runs_dir / p
 
 
 # =============================================================================

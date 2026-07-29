@@ -208,7 +208,7 @@ PARAM_SPACE: Dict[str, List[ParamSpec]] = {
                 "it via FASTROUTE_TCL."
             ),
             kind=KIND_FASTROUTE_ADJ,
-            affects=('RT',),
+            affects=('FP', 'PL', 'CTS', 'RT'),
         ),
         ParamSpec(
             name="GRT_CONGESTION_ITERATIONS", stage="RT", ptype="int",

@@ -13,6 +13,7 @@ import logging
 import shutil
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -27,7 +28,7 @@ from orfs.parser import (
 )
 from orfs.runner import (
     run_make, run_clean_make, tail_log,
-    execute_stage, execute_flow,
+    execute_stage, execute_flow, sanitize_make_log,
 )
 
 log = logging.getLogger(__name__)
@@ -49,6 +50,11 @@ class RunResult:
     error: Optional[str] = None                 # error summary (log tail, etc.)
     elapsed_s: float = 0.0                      # wall-clock seconds
     make_log_path: Optional[str] = None         # path to the make stdout/stderr log
+    command: Optional[str] = None               # make command line (for audit/replay)
+    start_time: Optional[str] = None            # ISO 8601 when stage started
+    end_time: Optional[str] = None              # ISO 8601 when stage ended
+    exit_code: Optional[int] = None             # process return code
+    report_path: Optional[str] = None           # relative path to stage report JSON
 
 
 # ---------------------------------------------------------------------------
@@ -114,13 +120,37 @@ class ORFSRunner:
         cmd, log_path = build_make_cmd(
             self.cfg, stage_params, variant, iteration, target="finish",
         )
+        start_ts = datetime.now(timezone.utc).isoformat()
+        # Build relativized command string for audit (same logic as execute_stage)
+        from orfs.runner import _relativize_cmd_arg
+        cmd_rel = [_relativize_cmd_arg(a, self.cfg) for a in cmd]
+        cmd_str = " ".join(cmd_rel)
+
         log.info("#%d [ORFS] make finish...", iteration)
         start = time.monotonic()
         returncode, timed_out = run_make(self.cfg, cmd, log_path)
+        sanitize_make_log(log_path, self.cfg)
         elapsed = time.monotonic() - start
+        end_ts = datetime.now(timezone.utc).isoformat()
 
-        result = RunResult(ok=False, variant=variant, elapsed_s=elapsed,
-                           make_log_path=str(log_path))
+        # Persist log_path relative to run_dir (same contract as execute_stage)
+        log_path_rel = (str(log_path.relative_to(self.cfg.run_dir))
+                        if log_path.is_relative_to(self.cfg.run_dir)
+                        else str(log_path))
+        # Compute finish report path (6_report.json) relative to flow_dir
+        report_path = None
+        finish_report = self.cfg.reports_dir(variant) / "6_report.json"
+        if finish_report.is_relative_to(self.cfg.flow_dir):
+            report_path = str(finish_report.relative_to(self.cfg.flow_dir))
+        elif finish_report.is_file():
+            report_path = str(finish_report)
+
+        result = RunResult(
+            ok=False, variant=variant, elapsed_s=elapsed,
+            make_log_path=log_path_rel, exit_code=returncode,
+            command=cmd_str, start_time=start_ts, end_time=end_ts,
+            report_path=report_path,
+        )
         result.stage_qor = parse_stage_qor(self.cfg, variant)
 
         if timed_out:
@@ -176,7 +206,9 @@ class ORFSRunner:
             return False
         tm = TrialManager(self.cfg.run_dir)
         parent_trial = tm.get(trial_id)
-        trial_dir = Path(parent_trial.artifact_dir) if (parent_trial and parent_trial.artifact_dir) else None
+        from schemas.trial import resolve_artifact_dir
+        trial_dir = (resolve_artifact_dir(parent_trial.artifact_dir, self.cfg.run_dir)
+                     if (parent_trial and parent_trial.artifact_dir) else None)
         if trial_dir is None or not trial_dir.is_dir():
             log.warning("[ORFS] Cannot verify checkpoint: trial dir not found for %s", trial_id)
             return False
@@ -334,8 +366,12 @@ class MockORFSRunner(ORFSRunner):
     def run_finish(self, stage_params, variant, iteration):
         sq = self._mock_stage_qor(stage_params)
         qor = self._mock_qor(stage_params)
+        ts = datetime.now(timezone.utc).isoformat()
         return RunResult(ok=True, variant=variant, qor=qor, stage_qor=sq,
-                         elapsed_s=0.02, make_log_path="[mock] no real log")
+                         elapsed_s=0.02, make_log_path="[mock] no real log",
+                         command="[mock] make finish",
+                         start_time=ts, end_time=ts,
+                         exit_code=0, report_path="[mock] reports/.../6_report.json")
 
     def copy_parent_results(self, parent_variant: str, new_variant: str) -> None:
         # No-op in mock mode: create empty dirs without looking for real artifacts

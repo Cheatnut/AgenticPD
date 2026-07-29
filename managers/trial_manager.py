@@ -86,7 +86,8 @@ class TrialManager:
         # Generate trial_id first so artifact_dir can reference it
         from schemas.trial import _new_trial_id
         trial_id = _new_trial_id()
-        artifact_dir = str(self.runs_dir / f"iter-{iteration}-{trial_id}")
+        # Store relative to session runs_dir (prevents /home/... in JSON)
+        artifact_dir = f"iter-{iteration}-{trial_id}"
         trial = TrialRecord(
             trial_id=trial_id,
             experiment_id=experiment_id,
@@ -171,7 +172,10 @@ class TrialManager:
 
     def _write_trial(self, trial: TrialRecord) -> None:
         """Atomically write trial.json for a single trial."""
-        trial_dir = Path(trial.artifact_dir) if trial.artifact_dir else self._trial_dir(trial.trial_id)
+        from schemas.trial import resolve_artifact_dir
+        trial_dir = resolve_artifact_dir(trial.artifact_dir, self.runs_dir)
+        if trial_dir is None:
+            trial_dir = self._trial_dir(trial.trial_id)
         trial_dir.mkdir(parents=True, exist_ok=True)
         trial_path = trial_dir / "trial.json"
         tmp = trial_path.with_suffix(trial_path.suffix + ".tmp")
@@ -214,7 +218,10 @@ if __name__ == "__main__":
     check(t1.status == "running", "create: status=running")
     check(t1.trial_id is not None and len(t1.trial_id) == 8, "create: 8-char trial_id")
     check(t1.start_time is not None, "create: start_time set")
-    check((Path(t1.artifact_dir) / "trial.json").is_file(), "create: trial.json exists")
+    from schemas.trial import resolve_artifact_dir
+    t1_resolved = resolve_artifact_dir(t1.artifact_dir, runs_dir)
+    check((t1_resolved / "trial.json").is_file() if t1_resolved else False,
+          "create: trial.json exists")
 
     # -- Get --
     t1_loaded = mgr.get(t1.trial_id)

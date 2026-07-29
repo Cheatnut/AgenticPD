@@ -36,29 +36,43 @@ search_space:
       FASTROUTE_LAYER_ADJUSTMENT: 0.2
       GRT_CONGESTION_ITERATIONS: 30
 
-  # Two RT-only changes (compatible with CTS checkpoint per ParamSpec.affects)
+  # Two actions, one RT-only and one cross-stage (found during experiment)
   actions:
     A_rt_layer_adj:
-      description: "FASTROUTE_LAYER_ADJUSTMENT 0.2 -> 0.25"
+      description: "FASTROUTE_LAYER_ADJUSTMENT 0.2 -> 0.25 (NEGATIVE CONTROL)"
       stage: RT
       param: FASTROUTE_LAYER_ADJUSTMENT
       from: 0.2
       to: 0.25
-      affects: ["RT"]               # CTS checkpoint stays valid
+      # Experiment discovered: FASTROUTE_LAYER_ADJUSTMENT is consumed during FP
+      # floorplan (make_tracks.tcl sources $FASTROUTE_TCL), not just during RT.
+      # affects was corrected to ('FP','PL','CTS','RT') in config.py.
+      # A CTS checkpoint fork with this change is GENUINELY INCOMPATIBLE —
+      # the fork SHOULD produce different QoR than full restart.
+      affects: ["FP", "PL", "CTS", "RT"]
+      expected_result: "FAIL — QoR mismatch expected, FP artifacts differ"
+      note: "This action serves as a negative control: it validates that checkpoint fork diverges when params affect pre-checkpoint stages."
 
     B_grt_iters:
-      description: "GRT_CONGESTION_ITERATIONS 30 -> 50"
+      description: "GRT_CONGESTION_ITERATIONS 30 -> 50 (POSITIVE CONTROL)"
       stage: RT
       param: GRT_CONGESTION_ITERATIONS
       from: 30
       to: 50
-      affects: ["RT"]               # CTS checkpoint stays valid
+      affects: ["RT"]               # CTS checkpoint stays valid — truly RT-only
+      expected_result: "PASS — QoR match + time saved"
 
 # ---- Checkpoint ----
 checkpoint:
   source: "agenticpd_baseline"      # FLOW_VARIANT of baseline run
   fork_stage: "CTS"                 # fork after CTS completes
-  compatibility: "Both actions change RT-only params -> CTS checkpoint remains valid"
+  compatibility: >-
+    Action B (GRT_CONGESTION_ITERATIONS, affects RT only) is compatible with
+    CTS checkpoint per ParamSpec.affects.  Action A (FASTROUTE_LAYER_ADJUSTMENT)
+    was originally thought to be RT-only but experiment revealed it affects FP
+    (make_tracks.tcl sources FASTROUTE_TCL during floorplan); affects corrected
+    to ('FP','PL','CTS','RT'), making CTS fork genuinely incompatible for Action A.
+  bug_found: "FASTROUTE_LAYER_ADJUSTMENT ParamSpec.affects was ('RT',) — corrected to ('FP','PL','CTS','RT') based on make log evidence (line 350 of full restart log shows fastroute tcl sourced during FP floorplan)."
 
 # ---- Budget ----
 budget:
@@ -74,22 +88,41 @@ evaluator:
 
 # ---- Acceptance criteria ----
 acceptance:
-  # For each action (A, B):
-  #   1. Both fork and full restart must complete (ok=true)
-  #   2. Final QoR (WNS/TNS/area/power) must match within tolerance
-  #   3. Fork elapsed time < full restart elapsed time
+  # Action A (FASTROUTE_LAYER_ADJUSTMENT): NEGATIVE CONTROL.
+  #   CheckpointManager.is_compatible() must return False —
+  #   CTS checkpoint is incompatible because FASTROUTE_LAYER_ADJUSTMENT
+  #   affects FP (make_tracks.tcl sources FASTROUTE_TCL during floorplan).
+  #   The fork is REJECTED without running (correct behaviour).
+  #   Evidence: checkpoint compatibility check log + full restart QoR
+  #   for reference.
+  #
+  # Action B (GRT_CONGESTION_ITERATIONS): POSITIVE CONTROL.
+  #   CheckpointManager.is_compatible() must return True.
+  #   Fork runs RT+finish only.  Final QoR must match full restart
+  #   within tolerance, and fork must save wall-clock time.
   #
   # Tolerances account for floating-point noise in ORFS reports:
   #   WNS:  1.0 ps
   #   TNS:  5.0 ps
-  #   Area: 10 um²
-  #   Power: 1e-5 W
   qor_tolerances:
     wns_ps: 1.0
     tns_ps: 5.0
-  require_all_actions_pass: true
-  require_qor_match: true
-  require_time_saved_gt_zero: true
+
+  # Formal CheckpointManager contract (new in v3)
+  checkpoint_manager_used: true
+  require_checkpoint_created: true       # cm.create() after baseline CTS
+  require_checkpoint_verified: true      # cm.verify() confirms manifest integrity
+  require_compatibility_checked: true    # cm.is_compatible() for each action
+
+  # Positive control (Action B) must pass
+  action_b_is_compatible: true           # is_compatible() returns True
+  action_b_require_qor_match: true       # fork QoR == full restart QoR
+  action_b_require_time_saved_gt_zero: true
+
+  # Negative control (Action A) must be correctly rejected
+  action_a_is_compatible: false          # is_compatible() returns False
+  action_a_fork_rejected: true           # checkpoint fork is not attempted
+  action_a_full_restart_must_pass: true  # full restart succeeds (reference QoR)
 
   # Evidence to collect on server
   required_evidence:
@@ -105,8 +138,11 @@ pre_run:
   - "git clone OpenROAD-flow-scripts on school server"
   - "source env.sh"
   - "cd flow"
-  - "make DESIGN_CONFIG=./designs/sky130hd/gcd/config.mk"  # verify ORFS works
+  - "make DESIGN_CONFIG=./designs/sky130hd/gcd/config.mk  # verify ORFS works"
   - "cd agenticpd"
-  - "cp .env.example .env  &&  edit .env with DEEPSEEK_API_KEY (not used by this script)"
-  - "python3 environment_manifest.json  # update git_commit + orfs revision"
-  - "cd ..  # back to flow/"
+  - "cp .env.example .env  &&  edit .env with DEEPSEEK_API_KEY (not used by this experiment)"
+  - "# Refresh environment_manifest.json: record ORFS commit and Python version"
+  - "cd <ORFS_root> && git rev-parse HEAD  # record this value"
+  - "python3 -c \"import json; m=json.load(open('agenticpd/environment_manifest.json')); m['orfs']['git_commit']='<sha>'; json.dump(m, open('agenticpd/environment_manifest.json','w'), indent=2, ensure_ascii=False)\""
+  - "# Also record PDK revision if known"
+  - "cd flow"

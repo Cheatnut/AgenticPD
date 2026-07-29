@@ -27,6 +27,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+# When run directly (python3 managers/checkpoint_manager.py), ensure the parent
+# agenticpd/ directory is on sys.path BEFORE the schemas import below.
+if __name__ == "__main__":
+    import sys as _sys
+    _parent = Path(__file__).resolve().parent.parent
+    if str(_parent) not in _sys.path:
+        _sys.path.insert(0, str(_parent))
+
 from schemas.trial import CheckpointRef, TrialRecord
 
 log = logging.getLogger(__name__)
@@ -64,6 +72,7 @@ class CheckpointManager:
         variant: str,
         param_hash: str,
         orfs_commit: str = "unresolved",
+        runs_dir: Optional[Path] = None,
     ) -> CheckpointRef:
         """Build a checkpoint from a completed trial stage.
 
@@ -79,6 +88,9 @@ class CheckpointManager:
             variant: FLOW_VARIANT name (e.g. "agenticpd_iter0", "base").
             param_hash: SHA-256 of the resolved upstream parameters (as JSON).
             orfs_commit: ORFS commit SHA (or "unresolved").
+            runs_dir: Session runs_dir for resolving relative artifact_dir.
+                      Pass the TrialManager's runs_dir to ensure checkpoint.json
+                      is written inside the correct session directory.
         """
         checkpoint_id = CheckpointRef.make_id(trial.trial_id, stage)
 
@@ -96,7 +108,7 @@ class CheckpointManager:
             artifact_dir=f"results/{platform}/{design}/{variant}",
         )
 
-        self._write_checkpoint(trial, cp)
+        self._write_checkpoint(trial, cp, runs_dir=runs_dir)
         log.info("Checkpoint %s created (%d files)", checkpoint_id, len(manifest))
         return cp
 
@@ -110,8 +122,13 @@ class CheckpointManager:
         Returns:
             (ok, errors): ok=True means all files are intact;
             errors is a list of human-readable problem descriptions.
+
+        An empty artifact manifest is treated as a verification failure —
+        a checkpoint with zero files is not a valid checkpoint.
         """
         errors: List[str] = []
+        if not cp.artifact_manifest:
+            return (False, ["Empty artifact manifest — no files to verify"])
         for entry in cp.artifact_manifest:
             filepath = self.flow_dir / entry["file"]
             if not filepath.is_file():
@@ -180,10 +197,19 @@ class CheckpointManager:
     # Query
     # ------------------------------------------------------------------
 
-    def load(self, trial: TrialRecord, stage: str) -> Optional[CheckpointRef]:
+    def load(self, trial: TrialRecord, stage: str,
+             runs_dir: Optional[Path] = None) -> Optional[CheckpointRef]:
         """Load a checkpoint from the trial's artifact directory."""
-        cp_path = Path(trial.artifact_dir) / "checkpoint.json" if trial.artifact_dir else None
-        if not cp_path or not cp_path.is_file():
+        if not trial.artifact_dir:
+            return None
+        from schemas.trial import resolve_artifact_dir
+        from config import AGENTICPD_DIR
+        trial_dir = resolve_artifact_dir(
+            trial.artifact_dir, runs_dir or AGENTICPD_DIR / "runs")
+        if trial_dir is None:
+            return None
+        cp_path = trial_dir / "checkpoint.json"
+        if not cp_path.is_file():
             return None
         try:
             data = json.loads(cp_path.read_text(encoding="utf-8"))
@@ -257,11 +283,18 @@ class CheckpointManager:
         return h.hexdigest()
 
     @staticmethod
-    def _write_checkpoint(trial: TrialRecord, cp: CheckpointRef) -> None:
+    def _write_checkpoint(trial: TrialRecord, cp: CheckpointRef,
+                          runs_dir: Optional[Path] = None) -> None:
         """Atomically write checkpoint.json inside the trial directory."""
         if not trial.artifact_dir:
             return
-        trial_dir = Path(trial.artifact_dir)
+        from schemas.trial import resolve_artifact_dir
+        from config import AGENTICPD_DIR
+        trial_dir = resolve_artifact_dir(
+            trial.artifact_dir, runs_dir or AGENTICPD_DIR / "runs"
+        )
+        if trial_dir is None:
+            return
         trial_dir.mkdir(parents=True, exist_ok=True)
         cp_path = trial_dir / "checkpoint.json"
         tmp = cp_path.with_suffix(cp_path.suffix + ".tmp")
@@ -318,7 +351,7 @@ if __name__ == "__main__":
     fp_sdc = flow_dir / "results" / "sky130hd" / "gcd" / "agenticpd_iter0" / "2_floorplan.sdc"
     fp_sdc.write_text("fake sdc content")
 
-    # Create a trial record
+    # Create a trial record with absolute artifact_dir for self-test tempdir
     from schemas.trial import TrialRecord
     trial = TrialRecord(
         trial_id="test0001",
@@ -356,12 +389,23 @@ if __name__ == "__main__":
     is_ok2, errors2 = mgr.verify(cp)
     check(not is_ok2, "verify detects tampering")
 
+    # -- Verify: empty manifest is treated as failure --
+    empty_cp = CheckpointRef(
+        checkpoint_id="cp-empty-test",
+        source_trial_id="test0001", stage="FP",
+        param_hash=phash, orfs_commit="unresolved",
+        artifact_manifest=[],  # empty — should fail verification
+    )
+    is_ok3, errors3 = mgr.verify(empty_cp)
+    check(not is_ok3, "verify: empty manifest rejected")
+    check(any("Empty" in e for e in errors3), "verify: empty manifest error message")
+
     # -- Compatibility (stage-aware via affects) --
     base_params = {"FP": {"CORE_UTILIZATION": 38}, "PL": {}, "CTS": {}, "RT": {}}
     same_params = {"FP": {"CORE_UTILIZATION": 38}, "PL": {}, "CTS": {}, "RT": {}}
     diff_fp_params = {"FP": {"CORE_UTILIZATION": 50}, "PL": {}, "CTS": {}, "RT": {}}
     rt_only_change = {"FP": {"CORE_UTILIZATION": 38}, "PL": {}, "CTS": {},
-                       "RT": {"FASTROUTE_LAYER_ADJUSTMENT": 0.25}}
+                       "RT": {"GRT_CONGESTION_ITERATIONS": 50}}
     check(mgr.is_compatible(cp, same_params, base_params),
           "compatible: same params")
     check(not mgr.is_compatible(cp, diff_fp_params, base_params),
@@ -381,6 +425,32 @@ if __name__ == "__main__":
 
     # -- Load non-existent stage --
     check(mgr.load(trial, "CTS") is None, "load non-existent stage -> None")
+
+    # -- Session isolation: create() with runs_dir writes to correct session dir --
+    # Simulate a session-specific runs_dir (not agenticpd/runs/ default).
+    session_runs = tmpdir / "session_runs" / "sky130hd_gcd" / "checkpoint_fork" / "20260729_test"
+    session_runs.mkdir(parents=True)
+    trial2 = TrialRecord(
+        trial_id="test0002",
+        experiment_id="session-isolation-test",
+        status="ok",
+        artifact_dir="iter-0-test0002",  # relative — the production default
+    )
+    (session_runs / "iter-0-test0002").mkdir(parents=True)
+    mgr.create(
+        trial=trial2, stage="FP",
+        platform="sky130hd", design="gcd",
+        variant="agenticpd_iter0", param_hash=phash,
+        runs_dir=session_runs,
+    )
+    cp_session_path = session_runs / "iter-0-test0002" / "checkpoint.json"
+    check(cp_session_path.is_file(),
+          "session isolation: checkpoint.json written in session dir")
+    # Verify no leak to default fallback location.
+    import config as _cfg
+    default_leak = _cfg.AGENTICPD_DIR / "runs" / "iter-0-test0002" / "checkpoint.json"
+    check(not default_leak.exists(),
+          "session isolation: no leak to default AGENTICPD_DIR/runs/")
 
     # Clean up
     shutil.rmtree(tmpdir)
