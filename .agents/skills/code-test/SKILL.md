@@ -5,7 +5,7 @@ description: 对 AgenticPD 执行零 LLM、零 ORFS、零网络的纯 Python 验
 
 # AgenticPD 纯 Python 验证
 
-执行前读取当前 `AGENTS.md`、`CLAUDE.md` 与 `docs/cli-verification.md`。Codex 只运行验证和报告，不修改实现、不创建 Plan、不执行 Git 操作。所有命令必须从项目根目录运行。
+执行前读取当前 `AGENTS.md`、`CLAUDE.md` 与 `docs/usage/cli-verification.md`。Codex 只运行验证和报告，不修改实现、不创建 Plan、不执行 Git 操作。所有命令必须从项目根目录运行。
 
 ## 验证边界
 
