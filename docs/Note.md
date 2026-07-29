@@ -1,27 +1,41 @@
-重构docs计划
+1-运行与配置系统
 
-1.如果用户没有明确要求，不得修改docs/,写入AGENTS.md和CLAUD.md
-2.按照以下结构重构docs/下的文件(可复用已有文件)
-3.文件名统一采用英文首字母大写+连字符+md的格式
-4.先摆出框架，文件内部内容先不改动/写入
+FrameworkConfig
+config_snapshot.json
 
-docs/
-    - plans/
-        - stage-c/
-            - stage-c-plan.md
-            - stage-c-check.md(阶段验收报告)
-        - stage-d/
-        - stage-e/
-        - stage-f/
-        - stage-g/
-        - stage-h/
-    - usage/
-        - cli-verification.md
-    - introduction/
-        - 系统架构.md
-        - <某细分系统>.md
-    - Note.md(用户自己写，禁止改动)
-    - AgenticPD八阶段迭代计划.md(总纲)
-    - WORKFLOW.md
-    - 阶段验收门模板.md
-    - HANDOVER.md(当前阶段,待修复的问题等;每日工作结束后覆盖写入,第二天加载)
+--parse-only 一个ORFS已有VARIANT的QoR查看器,会在runs/下新建session
+功能类似trial_inspector.py
+
+affects,作为判断checkpoint兼容性的依据
+
+三层输出
+session层:候选trial之索引trials.jsonl,优化树tree.json,配置快照config_snapshot.json,运行日志agenticpd.log
+ORFS层:variant四大产物,reports/,results/,objects/,logs/
+trial层:候选trial.json
+
+
+SHA-256
+每次创建Trial时候读取
+environment_manifest.json
+来计算SHA-256
+写入TrialRecord.env_hash
+
+2-智能搜索与决策系统
+
+checkpoint记录可复用文件
+优化树
+
+llm到真实运行需要经过四重考验
+1.给出的JSON可被解析
+2.参数属于当前阶段且类型、范围通过校验
+3.checkpoint通过完整性和兼容性检查
+4.ORFS结束后有完整的finish QoR
+
+由utils.qor_is_better()完成候选优胜判定
+
+
+
+
+
+
+

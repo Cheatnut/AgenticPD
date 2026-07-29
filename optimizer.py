@@ -114,6 +114,12 @@ class Optimizer:
 
     # ------------------------------------------------------------------
     @property
+    def _experiment_id(self) -> str:
+        """Derive experiment ID from platform and design (never hardcoded)."""
+        return f"agenticpd-{self.cfg.platform}-{self.cfg.design}"
+
+    # ------------------------------------------------------------------
+    @property
     def best_entry(self) -> Optional[Dict[str, Any]]:
         return self.history[self.best_idx] if self.best_idx is not None else None
 
@@ -151,7 +157,7 @@ class Optimizer:
             if env_manifest.is_file():
                 env_hash = hashlib.sha256(env_manifest.read_bytes()).hexdigest()[:16]
         trial = self.trial_mgr.create(
-            experiment_id="agenticpd-gcd",
+            experiment_id=self._experiment_id,
             parent_trial_id=parent_trial_id,
             branch_stage=branch_stage,
             config_hash=config_hash,
@@ -325,7 +331,7 @@ class Optimizer:
             from schemas.trial import _new_trial_id
             trial = TrialRecord(
                 trial_id=_new_trial_id(),
-                experiment_id="agenticpd-gcd",
+                experiment_id=self._experiment_id,
                 status="ok",
                 params=stage_params,
                 final_qor=result.qor.to_dict() if result.qor else None,

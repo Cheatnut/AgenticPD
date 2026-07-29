@@ -40,6 +40,7 @@ import config
 from config import AGENTICPD_DIR, ENV_FILENAME, RUNS_DIR as CFG_RUNS_DIR, FrameworkConfig, get_design_runs_dir
 from optimizer import Optimizer
 from orfs_interface import MockORFSRunner, ORFSRunner
+from orfs.parser import parse_qor, parse_stage_qor, detect_failed_stage
 from utils import load_dotenv_file, setup_logging
 
 log = logging.getLogger("main")
@@ -149,19 +150,22 @@ def build_config(args: argparse.Namespace, run_dir: Path) -> FrameworkConfig:
 
 
 def mode_parse_only(cfg: FrameworkConfig, variant: str) -> None:
-    """Parse QoR for an existing variant (validate parsing logic, zero EDA)."""
-    runner = ORFSRunner(cfg)
-    qor = runner.parse_qor(variant)
+    """Parse QoR for an existing variant (validate parsing logic, zero EDA).
+
+    Uses orfs.parser functions directly — does not instantiate ORFSRunner,
+    so this mode works without a valid ORFS environment (zero subprocess).
+    """
+    qor = parse_qor(cfg, variant)
     if qor is None:
         log.error("[MAIN] variant=%s: no parseable report found (6_report.json / "
                   "6_finish.rpt / 6_report.log)", variant)
         sys.exit(1)
     log.info("[MAIN] variant=%s final QoR: %s", variant, qor.pretty())
     log.info("[MAIN] raw values: %s", qor.to_dict())
-    stage_qor = runner.parse_stage_qor(variant)
+    stage_qor = parse_stage_qor(cfg, variant)
     log.info("[MAIN] stage intermediate timing: %s",
              json.dumps(stage_qor, ensure_ascii=False, indent=2))
-    failed = runner.detect_failed_stage(variant)
+    failed = detect_failed_stage(cfg, variant)
     if failed:
         log.warning("[MAIN] Flow stopped at stage per JSON check: %s (expected if variant only ran partial flow)", failed)
 

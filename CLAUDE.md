@@ -4,6 +4,105 @@ AgenticPD 是可复现、可审计、可比较的 Flow Optimization 实验平台
 
 本规范适用于本目录及子目录。Claude 是执行者：只按 Codex 已确认的 Plan 实现，不擅自改变阶段边界、架构或实验口径。
 
+## 常用命令
+
+所有命令在 `flow/` 下执行；测试在 `flow/agenticpd/` 下执行。
+
+```bash
+# 纯 Python 测试（无 EDA/LLM/网络依赖）
+cd flow/agenticpd && make test
+
+# Smoke test：只跑基线，不调 LLM
+cd flow && python3 agenticpd/main.py --baseline-only --design gcd
+
+# 全 mock 调试（零 token / 零 EDA，秒级完成）
+cd flow && python3 agenticpd/main.py --mock-llm --mock-orfs --iterations 5
+
+# MockLLM + 真实 ORFS（零 token，端到端验证 make 链路）
+cd flow && python3 agenticpd/main.py --mock-llm --iterations 2
+
+# 完整优化（需要 DEEPSEEK_API_KEY）
+cd flow && python3 agenticpd/main.py --design gcd --iterations 3
+
+# 断点续跑
+cd flow && python3 agenticpd/main.py --resume latest
+
+# 查看 trial
+python3 agenticpd/tools/trial_inspect.py --list sky130hd gcd
+python3 agenticpd/tools/trial_inspect.py <trial_id> --stages
+
+# 清理产物（base 基线永不删除）
+python3 agenticpd/tools/clean.py sky130hd gcd --dry-run
+python3 agenticpd/tools/clean.py sky130hd gcd --yes
+
+# 优化树可视化
+python3 agenticpd/tools/visualize.py agenticpd/runs/<session>
+
+# schemas / managers 模块自带自测
+python3 agenticpd/schemas/trial.py
+python3 agenticpd/managers/trial_manager.py
+```
+
+## 架构总览
+
+### 核心优化循环（`optimizer.py`）
+
+```
+baseline (iter #0) → [Observation → Judge → Branch → StageAgent×N → ORFS] × N
+```
+
+1. **Baseline**（`run_baseline`）：用 `BASELINE_PARAMS` 跑完整 RTL→GDS 流程，构建优化树的前四层节点（FP/PL/CTS/RT），结果缓存到 `runs/<platform>_<design>/.baseline/trial.json`，跨 session 复用。
+2. **Observation**（`build_observation_summary`）：从优化树提取 E(n) 探索平衡 + B(s) 阶段瓶颈，生成自适应摘要文本给 Judge。
+3. **Judge**（`JudgeAgent`）：分析摘要 + 历史，选择 branch_node（从哪个历史节点分支）和 branch_stage（从哪个阶段开始重跑），为下游 StageAgent 生成调参提示。
+4. **Branch 执行**：Bef(branch_stage) 阶段参数和 QoR 从树祖先继承（零成本），只对 {branch_stage} ∪ Aft(branch_stage) 调用 LLM 生成新参数并重跑 ORFS。
+5. **Per-stage pipeline**：StageAgent 按序执行 — 每个 StageAgent 收到上游真实 QoR 后生成参数 → `make <stage>` → 解析中间 QoR → 传给下一个 StageAgent。
+
+### 分支机制（论文 §3）
+
+- 优化树 `OptimizationTree`：每个节点 = 某个 iteration 在某个 stage 的执行快照（参数 + 中间 QoR）。
+- `branchable_nodes()`：stage 不是 root/RT 且 branch_count < max_branch_count 的节点可作为分支源。
+- 一致性约束：branch_node 的 stage 唯一决定 branch_stage（root→FP, FP节点→PL, PL节点→CTS, CTS节点→RT）。Judge 输出不一致时系统自动纠正。
+- `copy_parent_results()`：从父 variant 复制 results/logs/reports/objects 四目录到新 variant，使 make 只需增量重跑下游 stage。
+
+### 模块职责
+
+| 模块 | 职责 | 依赖 |
+|------|------|------|
+| `main.py` | CLI 入口，参数解析，run_dir 创建，模式分发 | config, optimizer, orfs |
+| `config.py` | **唯一真相源**：9 个 ParamSpec、PARAM_SPACE、BASELINE_PARAMS、FrameworkConfig、路径常量 | 无 |
+| `optimizer.py` | 优化主循环：baseline + 迭代（observation→judge→branch→stage pipeline），历史/tree 管理 | config, agents, optimization_tree, orfs, managers, utils |
+| `agents.py` | JudgeAgent + 4×StageAgent（FP/PL/CTS/RT）+ ObservationTool | config, llm_interface |
+| `optimization_tree.py` | 有根优化树数据结构：增删查、序列化、原子持久化 | config |
+| `llm_interface.py` | LLMClient（DeepSeek API，指数退避重试，JSON 解析失败自动反馈）+ MockLLMClient | config, utils |
+| `utils.py` | QoR 数据类 + 解析（JSON metrics 优先，rpt/log regex 兜底）、`qor_is_better()` 比较器、日志、JSON 提取、.env 加载 | config |
+| `orfs/` | ORFS 适配层：`command.py` 构建 make 命令、`runner.py` 子进程执行、`parser.py` 报告解析、`interface.py` 高层编排 + MockORFSRunner | config, utils, schemas |
+| `schemas/` | 数据模型：TrialRecord、StageResult、CheckpointRef、FailureClass（dataclass，无 Pydantic 依赖） | 无 |
+| `managers/` | TrialManager（trial 生命周期 + JSONL 索引）、CheckpointManager（checkpoint 创建/验证） | schemas |
+| `tools/` | CLI 工具：clean、visualize、trial_inspect、trial_reproduce、checkpoint_fork_verify | config, schemas, managers |
+
+### 数据流
+
+```
+main.py → FrameworkConfig → Optimizer
+  ├─ llm: LLMClient (or MockLLMClient)
+  ├─ runner: ORFSRunner (or MockORFSRunner)
+  ├─ tree: OptimizationTree → tree.json
+  ├─ trial_mgr: TrialManager → trials.jsonl + iter-{N}-{trial_id}/trial.json
+  └─ history: List[dict] (内存，resume 时从 trials.jsonl 重建)
+```
+
+- **参数流**：`config.PARAM_SPACE` → StageAgent 生成 → `stage_params: dict[stage, dict[name, value]]` → `orfs.command.build_make_cmd()` → make 命令行
+- **QoR 流**：ORFS `6_report.json` → `QoR.from_report_json()` → `qor_is_better()` 比较 → history + tree 更新
+- **Trial 流**：`TrialManager.create()` → populate stage_results → `update()` 原子写 `trial.json` + append `trials.jsonl`
+
+### 关键设计决策
+
+- **Timing 单位**：ORFS JSON metrics 中 timing 为 ns，框架内部统一用 ps（`TIMING_UNIT_TO_PS = 1000.0`）。
+- **QoR 比较优先级**：WNS → TNS → Power → Area。当双方 WNS ≥ 0（timing 都收敛）时跳过 WNS/TNS 直接比 power/area。
+- **JSON metrics 解析依赖 CPython dict 的 "last-wins" 行为**：`finish__design__instance__area` 在 `6_report.json` 中出现两次，后者才是正确的标准单元面积。不能换成报错或取首个值的 parser。
+- **基线缓存**：`.baseline/trial.json` 跨 session 共享，永不删除（`clean.py` 和 `wipe_all_variants()` 都保护它）。
+- **原子写**：tree.json、trial.json、trials.jsonl 全部先写 `.tmp` 再 `os.replace()`，crash 不 corrupt。
+
 ## 执行与阶段
 
 - 开始前阅读 `docs/plans/stage-<letter>/stage-<letter>-plan.md`；歧义、冲突、范围变化或计划缺失先反馈 Codex。

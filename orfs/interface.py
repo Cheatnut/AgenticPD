@@ -374,10 +374,10 @@ class MockORFSRunner(ORFSRunner):
                          exit_code=0, report_path="[mock] reports/.../6_report.json")
 
     def copy_parent_results(self, parent_variant: str, new_variant: str) -> None:
-        # No-op in mock mode: create empty dirs without looking for real artifacts
-        for get_dir in (self.cfg.results_dir, self.cfg.objects_dir,
-                        self.cfg.logs_dir, self.cfg.reports_dir):
-            get_dir(new_variant).mkdir(parents=True, exist_ok=True)
+        # True no-op: MockORFSRunner synthesises QoR without reading artifact
+        # files, so creating empty results/logs/reports/objects directories
+        # would mislead callers into thinking real artifacts exist.
+        pass
 
     def export_best(self, variant, best_entry):
         d = self.cfg.results_dir(self.cfg.best_variant_name)
