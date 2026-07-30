@@ -36,7 +36,8 @@
       "enum": [
         "running",
         "ok",
-        "failed"
+        "failed",
+        "paused"
       ]
     },
     "start_time": {
@@ -207,6 +208,210 @@
         "string",
         "null"
       ]
+    },
+    "execution_resolution": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Stage D checkpoint-aware execution resolution: records what was actually executed vs. what the Judge/Policy requested",
+      "required": [
+        "requested_parent_node_id",
+        "requested_start_stage",
+        "effective_start_stage",
+        "execution_mode"
+      ],
+      "properties": {
+        "requested_parent_node_id": {
+          "type": "string",
+          "description": "Tree node the Judge/Policy chose as branch origin"
+        },
+        "requested_start_stage": {
+          "enum": ["FP", "PL", "CTS", "RT"],
+          "description": "Stage the Judge/Policy requested to start from"
+        },
+        "effective_start_stage": {
+          "enum": ["FP", "PL", "CTS", "RT"],
+          "description": "Stage actually executed after checkpoint resolution"
+        },
+        "execution_mode": {
+          "enum": ["checkpoint_fork", "full_restart"],
+          "description": "checkpoint_fork = reused an ancestor checkpoint; full_restart = no compatible checkpoint, restart from FP"
+        },
+        "consumed_checkpoint": {
+          "type": ["string", "null"],
+          "description": "Checkpoint ID that was consumed (null for full_restart)"
+        },
+        "consumed_node_id": {
+          "type": ["string", "null"],
+          "description": "Tree node ID of the checkpoint's source (null for full_restart)"
+        },
+        "consumed_variant": {
+          "type": ["string", "null"],
+          "description": "FLOW_VARIANT of the consumed checkpoint's source (null for full_restart)"
+        },
+        "manifest_verified": {
+          "type": "boolean",
+          "description": "Whether artifact manifest passed file existence + hash checks"
+        },
+        "manifest_errors": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Human-readable manifest verification errors"
+        },
+        "compatibility_checked": {
+          "type": "boolean",
+          "description": "Whether parameter compatibility was checked against consumed checkpoint"
+        },
+        "is_compatible": {
+          "type": "boolean",
+          "description": "Whether parameters are compatible with the consumed checkpoint"
+        },
+        "invalidating_parameters": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Parameter names that caused incompatibility (informational; for deepest checkpoint attempted)"
+        },
+        "fallback_reason": {
+          "type": ["string", "null"],
+          "description": "Human-readable reason for fallback (null if deepest checkpoint was consumed)"
+        },
+        "checkpoint_audit_trail": {
+          "type": "array",
+          "description": "Full audit trail of every checkpoint examined during resolution, in order from deepest to shallowest. Preserves the complete decision trace so fallback decisions remain traceable.",
+          "items": {
+            "type": "object",
+            "required": ["checkpoint_id", "stage", "source_trial_id"],
+            "properties": {
+              "checkpoint_id": {
+                "type": "string",
+                "description": "Checkpoint ID examined (e.g. cp-abc12345-CTS)"
+              },
+              "stage": {
+                "enum": ["FP", "PL", "CTS"],
+                "description": "Stage of this checkpoint"
+              },
+              "source_trial_id": {
+                "type": "string",
+                "description": "Trial that produced this checkpoint"
+              },
+              "manifest_verified": {
+                "type": "boolean",
+                "description": "Whether artifact files passed existence + hash checks"
+              },
+              "manifest_errors": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Human-readable manifest verification errors (empty if passed)"
+              },
+              "compatibility_checked": {
+                "type": "boolean",
+                "description": "Whether parameter compatibility was checked"
+              },
+              "is_compatible": {
+                "type": "boolean",
+                "description": "Whether parameters are compatible with this checkpoint"
+              },
+              "invalidating_parameters": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Parameter names that caused incompatibility (empty if compatible or manifest failed)"
+              },
+              "rejection_reason": {
+                "type": ["string", "null"],
+                "description": "Why this checkpoint was rejected (null if consumed)"
+              }
+            }
+          }
+        }
+      }
+    },
+    "doomed_decisions": {
+      "type": "array",
+      "description": "Stage D DoomedPredictor outputs for this trial, one per decision stage (PL, CTS). Empty for trials not yet evaluated or old trials without this field.",
+      "items": {
+        "type": "object",
+        "required": ["risk_class"],
+        "properties": {
+          "risk_class": {
+            "enum": ["hard_dead", "soft_bad", "survivor"],
+            "description": "Risk classification: hard_dead = stage failed or unrecoverable; soft_bad = survivable but weak; survivor = strong candidate"
+          },
+          "risk_score": {
+            "type": "number",
+            "description": "Relative ranking within stage cohort (lower = worse). Not a calibrated probability."
+          },
+          "reason_codes": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Machine-readable reason slugs (e.g. timing_negative, stage_failed)"
+          },
+          "rule_version": {
+            "type": "string",
+            "description": "Predictor rule-set version identifier"
+          },
+          "input_evidence": {
+            "type": "object",
+            "description": "Snapshot of the MinimalObservation and cohort context fed to the predictor"
+          }
+        }
+      }
+    },
+    "gwtw_decisions": {
+      "type": "array",
+      "description": "Stage D GWTWScheduler actions for this trial, one per decision stage (PL, CTS). Empty for trials not yet scheduled or old trials without this field.",
+      "items": {
+        "type": "object",
+        "required": ["action", "decision_stage"],
+        "properties": {
+          "action": {
+            "enum": ["continue", "pause", "audit_continue", "fork", "finish"],
+            "description": "Scheduler action: continue to next stage, pause the trial, audit overrule soft_bad, fork from survivor checkpoint, or finish the flow"
+          },
+          "decision_stage": {
+            "enum": ["PL", "CTS"],
+            "description": "Which stage triggered this scheduling decision"
+          },
+          "rank": {
+            "type": "integer",
+            "description": "Cohort rank at decision time"
+          },
+          "parent_trial_id": {
+            "type": ["string", "null"],
+            "description": "Survivor parent trial (for fork actions)"
+          },
+          "child_trial_id": {
+            "type": ["string", "null"],
+            "description": "Newly spawned child trial (for fork actions)"
+          },
+          "is_audit_pass": {
+            "type": "boolean",
+            "description": "True when audit quota overrides a soft_bad classification"
+          },
+          "scheduler_version": {
+            "type": "string",
+            "description": "Scheduler rule-set version identifier"
+          }
+        }
+      }
+    },
+    "decision_trace_refs": {
+      "type": "array",
+      "description": "Stable relative references to entries in the append-only decision trace JSONL file. Each ref points to one DoomedDecision or GWTWDecision record.",
+      "items": {
+        "type": "object",
+        "required": ["decision_id", "trace_path"],
+        "properties": {
+          "decision_id": {
+            "type": "string",
+            "description": "Unique identifier of the decision entry in the trace file"
+          },
+          "trace_path": {
+            "type": "string",
+            "description": "Relative path to the trace JSONL file from the session runs directory. Must not be absolute or contain '..'."
+          }
+        }
+      }
     },
     "artifact_dir": {
       "type": [

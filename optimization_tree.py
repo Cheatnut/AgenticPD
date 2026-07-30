@@ -42,6 +42,7 @@ class OptimNode:
     parent_id: Optional[str] = None    # parent node_id (None for root)
     children_ids: List[str] = field(default_factory=list)
     branch_count: int = 0              # E(n): times chosen as branch origin
+    source_trial_id: Optional[str] = None  # trial that produced this node
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -54,6 +55,7 @@ class OptimNode:
             "parent_id": self.parent_id,
             "children_ids": self.children_ids,
             "branch_count": self.branch_count,
+            "source_trial_id": self.source_trial_id,
         }
 
     @classmethod
@@ -68,6 +70,7 @@ class OptimNode:
             parent_id=d.get("parent_id"),
             children_ids=d.get("children_ids", []),
             branch_count=d.get("branch_count", 0),
+            source_trial_id=d.get("source_trial_id"),
         )
 
 
@@ -172,19 +175,31 @@ class OptimizationTree:
     # ------------------------------------------------------------------
     def add_path(self, iteration: int, parent_id: str,
                  stages_chain: List[Tuple[str, str, Dict[str, Any],
-                                          Optional[Dict[str, float]]]]
+                                          Optional[Dict[str, float]]]],
+                 source_trial_id: Optional[str] = None,
+                 node_ids: Optional[List[str]] = None,
                  ) -> List[str]:
         """Mount a stage node chain along parent_id; return new node_id list.
 
         stages_chain: [(stage, variant, params, stage_qor), ...]
         Each tuple creates one node, linked parent→child in order.
+        All nodes in the chain share the same source_trial_id.
+
+        When *node_ids* is provided it must have the same length as
+        *stages_chain* and each entry is used as the node_id for the
+        corresponding stage (guarantees collision-free unique IDs for
+        Stage D children).
         """
         new_ids: List[str] = []
         current_parent = parent_id
-        for stage, variant, params, stage_qor in stages_chain:
-            node_id = f"iter{iteration}_{stage}"
-            # If same iteration + same stage already exists (resume replay),
-            # skip creation
+        for idx, (stage, variant, params, stage_qor) in enumerate(stages_chain):
+            if node_ids and idx < len(node_ids):
+                node_id = node_ids[idx]
+            else:
+                node_id = f"iter{iteration}_{stage}"
+            # If same node_id already exists (resume replay / deterministic
+            # rebuild), skip creation but still return the id so callers
+            # can track it.
             if node_id in self._nodes:
                 log.debug("Node %s already exists, skipping creation", node_id)
                 current_parent = node_id
@@ -198,6 +213,7 @@ class OptimizationTree:
                 params=dict(params),
                 stage_qor=dict(stage_qor) if stage_qor else None,
                 parent_id=current_parent,
+                source_trial_id=source_trial_id,
             )
             self._nodes[node_id] = node
             parent = self._nodes.get(current_parent)
@@ -206,6 +222,18 @@ class OptimizationTree:
             current_parent = node_id
             new_ids.append(node_id)
         return new_ids
+
+    def update_node_qor(self, node_id: str,
+                        stage_qor: Dict[str, float]) -> bool:
+        """Update a node's stage_qor after stage execution completes.
+
+        Returns True if the node was found and updated, False otherwise.
+        """
+        node = self._nodes.get(node_id)
+        if node is None:
+            return False
+        node.stage_qor = dict(stage_qor)
+        return True
 
     def increment_branch_count(self, node_id: str) -> None:
         node = self._nodes.get(node_id)

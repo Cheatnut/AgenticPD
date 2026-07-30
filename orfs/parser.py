@@ -60,13 +60,41 @@ STAGE_MAKE_TARGET: Dict[str, str] = {
     "RT":  "route",
 }
 
-# Clean targets for branch-from-stage re-runs
+# Clean targets for branch-from-stage re-runs (ORFS make targets).
 CLEAN_TARGETS: Dict[str, str] = {
-    "FP":  "clean_floorplan",
-    "PL":  "clean_place",
-    "CTS": "clean_cts",
-    "RT":  "clean_route",
+    "FP":     "clean_floorplan",
+    "PL":     "clean_place",
+    "CTS":    "clean_cts",
+    "RT":     "clean_route",
+    "finish": "clean_finish",
 }
+
+# Execution order of all stages including finish (used for checkpoint-fork
+# downstream cleanup: when forking from stage S, run clean_<S> through
+# clean_finish so stale downstream artifacts — including unprefixed files
+# like route.guide, output_guide.mod, updated_clks.sdc — are removed).
+_EXECUTION_ORDER: List[str] = ["FP", "PL", "CTS", "RT", "finish"]
+
+
+def downstream_clean_targets(from_stage: str) -> List[str]:
+    """Return ORFS clean targets to run when forking from *from_stage*.
+
+    Runs clean for *from_stage* and every stage after it through finish,
+    ensuring no stale artifacts (numeric-prefixed or otherwise) survive
+    the copy.
+
+    Example: from_stage="CTS" → ["clean_cts", "clean_route", "clean_finish"].
+    """
+    try:
+        start_idx = _EXECUTION_ORDER.index(from_stage)
+    except ValueError:
+        return []
+    targets: List[str] = []
+    for stage in _EXECUTION_ORDER[start_idx:]:
+        t = CLEAN_TARGETS.get(stage)
+        if t is not None:
+            targets.append(t)
+    return targets
 
 
 # ---------------------------------------------------------------------------

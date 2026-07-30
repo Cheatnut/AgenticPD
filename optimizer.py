@@ -19,12 +19,13 @@ from typing import Any, Dict, List, Optional
 import config
 from agents import (JudgeAgent, build_observation_summary,
                     build_stage_agents)
+from checkpoint_resolver import resolve_checkpoint
 from config import FrameworkConfig
+from managers import TrialManager, CheckpointManager
 from optimization_tree import (OptimizationTree, ROOT_ID,
                                load_tree, save_tree_atomic)
 from orfs_interface import ORFSRunner, RunResult
-from managers import TrialManager
-from schemas.trial import TrialRecord, StageResult, FailureClass
+from schemas.trial import TrialRecord, StageResult, FailureClass, ExecutionResolution
 from utils import QoR, qor_is_better
 
 log = logging.getLogger("optimizer")
@@ -111,6 +112,9 @@ class Optimizer:
         self.trial_mgr = TrialManager(cfg.run_dir if cfg.run_dir else config.RUNS_DIR)
         self._current_trial: Optional[TrialRecord] = None
         self._parent_trial_id: Optional[str] = None
+
+        # Stage D: CheckpointManager for creating/verifying stage checkpoints
+        self.checkpoint_mgr = CheckpointManager(cfg.flow_dir)
 
     # ------------------------------------------------------------------
     @property
@@ -271,15 +275,15 @@ class Optimizer:
 
     # ------------------------------------------------------------------
     def _add_to_tree(self, iteration: int, parent_id: str,
-                     stages_chain: List[tuple]) -> List[str]:
-        """Append new node chain to tree, increment parent branch_count (unless extending from itself).
-
-        stages_chain: [(stage, variant, params, stage_qor), ...]  downstream stages only.
-        """
-        # Increment branch count (paper E(n) update)
+                     stages_chain: List[tuple],
+                     source_trial_id: Optional[str] = None) -> List[str]:
+        """Append new node chain to tree, increment parent branch_count
+        (unless extending from itself)."""
         if parent_id != ROOT_ID:
             self.tree.increment_branch_count(parent_id)
-        return self.tree.add_path(iteration, parent_id, stages_chain)
+        return self.tree.add_path(
+            iteration, parent_id, stages_chain,
+            source_trial_id=source_trial_id)
 
     # ------------------------------------------------------------------
     def run_baseline(self) -> RunResult:
@@ -288,6 +292,11 @@ class Optimizer:
         Baseline params are always the same for a given design, so the
         result is cached under ``runs/<platform>_<design>/.baseline/``.
         Subsequent sessions reuse the cached trial and skip the ORFS run.
+
+        Stage D fix 2.3: baseline now creates FP/PL/CTS checkpoints so
+        downstream iterations can resolve against them.  Both cache-hit
+        and cache-miss paths persist the trial to the current session
+        and create per-stage checkpoints.
         """
         stage_params = {s: dict(config.BASELINE_PARAMS.get(s, {}))
                         for s in config.STAGES}
@@ -313,65 +322,127 @@ class Optimizer:
                 if result.ok:
                     chain = [(s, variant, stage_params.get(s, {}), sq.get(s))
                              for s in config.STAGES]
-                    self._add_to_tree(0, ROOT_ID, chain)
+                    self._add_to_tree(0, ROOT_ID, chain,
+                                      source_trial_id=trial.trial_id)
+                    # Stage D fix 2.3: persist trial to current session and
+                    # create FP/PL/CTS checkpoints so the resolver can consume them.
+                    self._persist_baseline_trial(trial, stage_params, variant)
                 self._persist()
                 return result
 
         # ---- cache miss: run ORFS ----
         log.info("========== Iter #0 (Baseline, full run from ROOT) ==========")
         result = self.runner.run_flow(stage_params, variant, 0)
+        # Build a TrialRecord for the shared cache — must exist before
+        # _add_to_tree so tree nodes can reference source_trial_id.
+        baseline_trial_id: Optional[str] = None
         if result.ok:
-            chain = [(s, variant, stage_params.get(s, {}),
-                      result.stage_qor.get(s)) for s in config.STAGES]
-            self._add_to_tree(0, ROOT_ID, chain)
-        self._record(0, stage_params, result, judge_decision=None)
-        # Build a TrialRecord for the shared cache only — no session-local
-        # iter-0-* directory (the cache is the single source of truth).
-        if result.ok and cache_dir:
             from schemas.trial import _new_trial_id
+            baseline_trial_id = _new_trial_id()
             trial = TrialRecord(
-                trial_id=_new_trial_id(),
+                trial_id=baseline_trial_id,
                 experiment_id=self._experiment_id,
                 status="ok",
                 params=stage_params,
                 final_qor=result.qor.to_dict() if result.qor else None,
             )
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            (cache_dir / "trial.json").write_text(
-                json.dumps(trial.to_dict(), ensure_ascii=False, indent=2),
-                encoding="utf-8")
-            log.info("[OPTIMIZER] Baseline cached to %s", cache_dir)
+            # Cache to .baseline/ for cross-session reuse
+            if cache_dir:
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                (cache_dir / "trial.json").write_text(
+                    json.dumps(trial.to_dict(), ensure_ascii=False, indent=2),
+                    encoding="utf-8")
+                log.info("[OPTIMIZER] Baseline cached to %s", cache_dir)
+            chain = [(s, variant, stage_params.get(s, {}),
+                      result.stage_qor.get(s)) for s in config.STAGES]
+            self._add_to_tree(0, ROOT_ID, chain,
+                              source_trial_id=baseline_trial_id)
+            # Stage D fix 2.3: persist trial to current session and create
+            # FP/PL/CTS checkpoints.
+            self._persist_baseline_trial(trial, stage_params, variant)
+        self._record(0, stage_params, result, judge_decision=None)
         if not result.ok:
             log.error("#0 [OPTIMIZER] Baseline failed (%s), continuing without reference",
                       result.error)
         return result
 
+    def _persist_baseline_trial(self, trial: TrialRecord,
+                                 stage_params: Dict[str, Dict[str, Any]],
+                                 variant: str) -> None:
+        """Persist a baseline trial to the current session and create
+        FP/PL/CTS checkpoints (Stage D fix 2.3).
+
+        The trial gets an artifact_dir under the session runs_dir so
+        TrialManager.get() and CheckpointManager.load() can find it.
+        Three per-stage checkpoints reference the persistent baseline
+        variant artifacts (``agenticpd_baseline``), which are never wiped.
+        """
+        # Set artifact_dir so checkpoints have a home in the current session
+        trial.artifact_dir = f"iter-0-{trial.trial_id}"
+        self._current_trial = trial
+
+        # Persist trial to session (enables TrialManager.get for resolver)
+        self.trial_mgr._write_trial(trial)
+        self.trial_mgr._append_index(trial)
+
+        # Create FP/PL/CTS checkpoints against the baseline variant artifacts
+        ph = CheckpointManager.param_hash(stage_params)
+        cp_stages = []
+        for stage in ("FP", "PL", "CTS"):
+            try:
+                cp = self.checkpoint_mgr.create(
+                    trial=trial,
+                    stage=stage,
+                    platform=self.cfg.platform,
+                    design=self.cfg.design,
+                    variant=variant,
+                    param_hash=ph,
+                    runs_dir=self.cfg.run_dir,
+                )
+                cp_stages.append(stage)
+                log.info("[OPTIMIZER] Baseline checkpoint %s created @%s",
+                         cp.checkpoint_id, stage)
+            except Exception as e:
+                log.warning("[OPTIMIZER] Baseline checkpoint @%s creation failed "
+                           "(non-fatal): %s", stage, e)
+        if cp_stages:
+            log.info("[OPTIMIZER] Baseline checkpoints created for: %s",
+                     ", ".join(cp_stages))
+
     # ------------------------------------------------------------------
     def run_iteration(self, iteration: int) -> RunResult:
-        """Paper sec. 6 lines 4-13: observation summary -> Judge -> branch -> downstream execution."""
+        """Paper sec. 6 lines 4-13, with Stage D checkpoint resolution.
+
+        Three-phase approach:
+          Phase 1 — Pre-generate ALL downstream params from StageAgents
+                    (using inherited upstream QoR, no ORFS execution).
+          Phase 2 — Call the checkpoint resolver to get an
+                    ExecutionResolution.
+          Phase 3 — Execute stages from effective_start_stage; create
+                    FP/PL/CTS checkpoints on success.
+        """
         log.info("========== Iter #%d ==========", iteration)
 
-        # 4) Observation summary
+        # ---- 4) Observation summary (unchanged) ----
         summary = build_observation_summary(
             self.tree, self.history, self._best_qor(),
             self.cfg.max_branch_count)
 
-        # 5) Judge decision
+        # ---- 5) Judge decision (unchanged) ----
         decision = self.judge.act({
             "summary": summary, "history": self.history, "best": self.best_entry})
         branch_node_id = (decision["branch_node"] or "").strip()
-        # Normalise: ROOT / root -> ROOT_ID
         if branch_node_id.upper() == "ROOT":
             branch_node_id = ROOT_ID
-        branch_stage = decision["branch_stage"]
+        requested_start_stage = decision["branch_stage"]
         hints = decision["hints"]
         log.info("#%d [Judge Agent] branch_node = %s", iteration, branch_node_id)
-        log.info("#%d [Judge Agent] branch_stage = %s", iteration, branch_stage)
+        log.info("#%d [Judge Agent] branch_stage = %s", iteration, requested_start_stage)
         for s, h in hints.items():
             if h:
                 log.info("#%d [Judge Agent] @%s Agent: %s", iteration, s, h[:80])
 
-        # 6) Resolve branch node: get ancestor params and QoR (reuse Bef results)
+        # ---- 6) Resolve branch node & parent ----
         branch_node = self.tree.find_node(branch_node_id)
         if branch_node is None:
             log.warning("#%d [Judge Agent] branch_node=%s not in tree, fallback to ROOT",
@@ -380,10 +451,7 @@ class Optimizer:
             branch_node_id = ROOT_ID
         parent_variant = branch_node.variant
 
-        # Consistency constraint (paper sec. 3.2): branch_stage must be the stage
-        # immediately following the branch_node stage — choosing a node uniquely
-        # determines the re-run start point. If Judge output is inconsistent,
-        # correct based on branch_node (missing links break tree path integrity).
+        # Consistency constraint (paper sec. 3.2)
         expected_stage = _next_stage_of_node(branch_node.stage)
         if expected_stage is None:
             log.warning("#%d [Judge Agent] branch_node=%s is a leaf (RT), cannot branch, fallback to ROOT+FP",
@@ -392,20 +460,17 @@ class Optimizer:
             branch_node_id = ROOT_ID
             expected_stage = "FP"
             parent_variant = branch_node.variant
-        if branch_stage != expected_stage:
+        if requested_start_stage != expected_stage:
             log.warning("#%d [Judge Agent] branch_stage=%s inconsistent with "
                         "branch_node=%s (stage=%s), corrected to %s",
                         iteration,
-                        branch_stage, branch_node_id, branch_node.stage,
+                        requested_start_stage, branch_node_id, branch_node.stage,
                         expected_stage)
-            branch_stage = expected_stage
-            decision["branch_stage"] = branch_stage
+            requested_start_stage = expected_stage
+            decision["branch_stage"] = requested_start_stage
 
-        # Extract Bef-stage params from tree ancestors (inherited, no LLM call)
+        # Inherit params + QoR from tree ancestors
         inherited_params = self.tree.get_params_chain(branch_node_id)
-        # Bef-stage QoR: ancestor chain + the branch origin node itself (it is the
-        # last Bef stage — e.g. branching from an FP node to re-run PL,
-        # Bef(PL)={FP}=branch origin itself)
         inherited_qor_map: Dict[str, Dict[str, float]] = {}
         bef_nodes = self.tree.ancestors(branch_node_id)
         if branch_node.stage in config.STAGES:
@@ -414,14 +479,14 @@ class Optimizer:
             if node.stage in config.STAGES and node.stage_qor:
                 inherited_qor_map[node.stage] = node.stage_qor
 
-        # Upstream QoR list for Bef stages (initial pipeline input: only branch
-        # ancestor QoR; each completed stage appends its real QoR for the next
-        # StageAgent to consume)
-        def _build_upstream_qor() -> List[dict]:
+        # Parent trial: the source_trial_id of the branch node, or None
+        parent_trial_id = branch_node.source_trial_id
+
+        def _build_inherited_upstream_qor() -> List[dict]:
             result: List[dict] = []
             for stage in config.STAGES:
                 if stage not in inherited_qor_map:
-                    break  # Bef chain stops at branch origin
+                    break
                 sq = inherited_qor_map[stage]
                 ws = tns = None
                 for k, v in sq.items():
@@ -433,38 +498,21 @@ class Optimizer:
             return result
 
         new_variant = self.cfg.variant_name(iteration)
-        downstream = _downstream_stages(branch_stage)
+        requested_downstream = _downstream_stages(requested_start_stage)
 
-        # Stage C6: begin trial record for this iteration
-        self._begin_trial(
-            iteration,
-            parent_trial_id=self._current_trial.trial_id if self._current_trial else None,
-            branch_stage=branch_stage,
-            parent_params=inherited_params,
-        )
-
-        # 7) Per-stage pipeline: StageAgent calls LLM -> make single stage ->
-        #    obtain real QoR -> pass to next StageAgent
-        #    (paper sec. 5: ctx_s = Q_k(i)_{i in Bef(s)})
-        stage_params = dict(inherited_params)  # Bef inheritance
+        # ================================================================
+        # Phase 1: Pre-generate ALL params for downstream stages.
+        # StageAgents use inherited upstream QoR only (real ORFS hasn't run
+        # yet).  We need the complete candidate param set for checkpoint
+        # compatibility checks.
+        # ================================================================
+        stage_params = dict(inherited_params)
         stage_reasons: Dict[str, str] = {}
-        live_upstream_qor = _build_upstream_qor()  # dynamically growing upstream QoR
         collected_stage_qor: Dict[str, Dict[str, float]] = {}
         failed_stage: Optional[str] = None
+        live_upstream_qor = _build_inherited_upstream_qor()
 
-        # 7a) Establish variant baseline
-        if branch_node_id == ROOT_ID:
-            # From root: ensure variant directory is clean (prevents make from
-            # skipping stages due to stale crash artifacts)
-            self.runner._wipe_variant(new_variant)  # type: ignore[attr-defined]
-        else:
-            # Branch from intermediate node: copy parent artifacts to new variant
-            # (Bef-stage results are now in place)
-            self.runner.copy_parent_results(parent_variant, new_variant)
-
-        # 7b) Per stage: LLM -> make -> obtain QoR -> next stage
-        for s in downstream:
-            # a) StageAgent generates parameters (using accumulated real upstream QoR)
+        for s in requested_downstream:
             ctx = {
                 "upstream_qor": live_upstream_qor,
                 "cross_iteration_exp": self._cross_exp(s),
@@ -475,15 +523,139 @@ class Optimizer:
             stage_params[s] = out["params"]
             stage_reasons[s] = out["reason"]
             log.info("#%d [%s Agent] %s", iteration, s, out["reason"][:120])
-            log.info("#%d [%s Agent] set %s params...", iteration, s, s)
             for pname, pvalue in out["params"].items():
                 log.info("#%d [%s Agent] %s: %s", iteration, s, pname, pvalue)
 
-            # b) Execute single stage via make (returns StageResult with elapsed_s)
+        # ================================================================
+        # Phase 2: Resolve checkpoint against complete candidate params.
+        # ================================================================
+        resolution = resolve_checkpoint(
+            requested_parent_node_id=branch_node_id,
+            requested_start_stage=requested_start_stage,
+            candidate_params=stage_params,
+            inherited_params=inherited_params,
+            tree=self.tree,
+            trial_mgr=self.trial_mgr,
+            checkpoint_mgr=self.checkpoint_mgr,
+            runs_dir=self.cfg.run_dir,
+        )
+        effective_start_stage = resolution.effective_start_stage
+        effective_downstream = _downstream_stages(effective_start_stage)
+        log.info("#%d [RESOLVER] requested=%s effective=%s mode=%s cp=%s",
+                 iteration, requested_start_stage, effective_start_stage,
+                 resolution.execution_mode,
+                 resolution.consumed_checkpoint or "none")
+        if resolution.fallback_reason:
+            log.info("#%d [RESOLVER] fallback_reason: %s", iteration,
+                     resolution.fallback_reason)
+
+        # ================================================================
+        # Phase 3: Execute from effective_start_stage.
+        # ================================================================
+
+        # ---- Stage D fix 2.3: validate checkpoint_fork metadata ----
+        # If consumed_variant or consumed_node_id is missing, the fork
+        # cannot proceed safely (we'd be copying unknown artifacts).
+        # Force full_restart instead of falling back to parent_variant.
+        if (resolution.execution_mode == "checkpoint_fork"
+                and (not resolution.consumed_variant
+                     or not resolution.consumed_node_id)):
+            log.error(
+                "#%d [OPTIMIZER] checkpoint_fork with incomplete metadata "
+                "(consumed_variant=%s, consumed_node_id=%s), forcing full_restart",
+                iteration,
+                resolution.consumed_variant,
+                resolution.consumed_node_id,
+            )
+            resolution.execution_mode = "full_restart"
+            resolution.effective_start_stage = "FP"
+            resolution.consumed_checkpoint = None
+            resolution.consumed_node_id = None
+            resolution.consumed_variant = None
+            resolution.fallback_reason = (
+                "checkpoint_fork metadata incomplete (missing consumed_variant "
+                "or consumed_node_id), forced full_restart"
+            )
+            effective_start_stage = "FP"
+            effective_downstream = _downstream_stages("FP")
+
+        # ---- Stage D fix 2.1: compute actual parent from resolution ----
+        # The tree parent and trial parent must reflect the ACTUAL execution,
+        # not the Judge's request.  When the resolver falls back from CTS to
+        # PL checkpoint, the tree parent is the PL node (not CTS), and the
+        # parent trial is the PL node's source trial.
+        if resolution.execution_mode == "checkpoint_fork":
+            actual_parent_node_id = resolution.consumed_node_id
+            consumed_node = self.tree.find_node(resolution.consumed_node_id)
+            actual_parent_trial_id = (
+                consumed_node.source_trial_id if consumed_node else None
+            )
+            # Recompute inherited QoR from the ACTUAL parent chain
+            # (not the Judge's branch_node chain).
+            actual_inherited_qor_map: Dict[str, Dict[str, float]] = {}
+            actual_bef_nodes = self.tree.ancestors(actual_parent_node_id)
+            actual_bef_node = self.tree.find_node(actual_parent_node_id)
+            if actual_bef_node and actual_bef_node.stage in config.STAGES:
+                actual_bef_nodes = actual_bef_nodes + [actual_bef_node]
+            for node in actual_bef_nodes:
+                if node.stage in config.STAGES and node.stage_qor:
+                    actual_inherited_qor_map[node.stage] = node.stage_qor
+            # Recompute inherited params from actual parent for
+            # _finalize_trial param_diff computation.
+            actual_inherited_params = self.tree.get_params_chain(
+                actual_parent_node_id)
+        else:
+            # full_restart: no parent, no inherited QoR
+            actual_parent_node_id = ROOT_ID
+            actual_parent_trial_id = None
+            actual_inherited_qor_map = {}
+            actual_inherited_params = {}
+
+        # Open trial record (uses actual parent, not Judge-requested parent).
+        self._begin_trial(
+            iteration,
+            parent_trial_id=actual_parent_trial_id,
+            branch_stage=effective_start_stage,
+            parent_params=actual_inherited_params,
+        )
+
+        # 7a) Establish variant baseline based on resolution
+        if resolution.execution_mode == "full_restart":
+            self.runner._wipe_variant(new_variant)  # type: ignore[attr-defined]
+        else:
+            # checkpoint_fork: copy from the CONSUMED checkpoint's source
+            # variant, NOT the Judge-requested parent_variant.
+            self.runner.copy_parent_results(
+                resolution.consumed_variant, new_variant)
+            # Stage D fix 2.2 (revised): after copying the parent variant's
+            # complete directory trees, run ORFS make clean_<stage> for all
+            # downstream stages so stale artifacts (including unprefixed files
+            # like route.guide) don't cause make to skip stages.
+            self.runner._clean_downstream_stages(  # type: ignore[attr-defined]
+                new_variant, effective_start_stage)
+
+        # 7b) Execute stages from effective_start_stage.
+        # Rebuild live_upstream_qor from the ACTUAL inherited QoR.
+        live_upstream_qor = []
+        for stage in config.STAGES:
+            if stage in actual_inherited_qor_map:
+                sq = actual_inherited_qor_map[stage]
+                ws = tns = None
+                for k, v in sq.items():
+                    if k.endswith("_ws_ps"):
+                        ws = v
+                    elif k.endswith("_tns_ps"):
+                        tns = v
+                live_upstream_qor.append(
+                    {"stage": stage, "ws_ps": ws, "tns_ps": tns})
+            else:
+                break  # Bef chain stops
+
+        for s in effective_downstream:
+            # b) Execute single stage via make
             stage_result = self.runner.run_stage(
                 s, stage_params, new_variant, iteration)
 
-            # Stage C6: record per-stage result
             self._add_stage_result(stage_result)
 
             if stage_result.status != "ok":
@@ -496,8 +668,29 @@ class Optimizer:
 
             collected_stage_qor[s] = stage_result.stage_qor
 
-            # c) Append real intermediate QoR to live_upstream_qor;
-            #    the next StageAgent sees this stage's actual results
+            # Create checkpoint for FP/PL/CTS (stages that have downstream
+            # stages to fork from).
+            if s in ("FP", "PL", "CTS") and self._current_trial:
+                try:
+                    ph = CheckpointManager.param_hash(
+                        {st: stage_params.get(st, {}) for st in config.STAGES})
+                    cp = self.checkpoint_mgr.create(
+                        trial=self._current_trial,
+                        stage=s,
+                        platform=self.cfg.platform,
+                        design=self.cfg.design,
+                        variant=new_variant,
+                        param_hash=ph,
+                        runs_dir=self.cfg.run_dir,
+                    )
+                    self._current_trial.checkpoint = cp
+                    log.info("#%d [OPTIMIZER] checkpoint %s created @%s",
+                             iteration, cp.checkpoint_id, s)
+                except Exception as e:
+                    log.warning("#%d [OPTIMIZER] checkpoint @%s creation failed (non-fatal): %s",
+                                iteration, s, e)
+
+            # Update live_upstream_qor for next stage
             ws = tns = None
             for k, v in stage_result.stage_qor.items():
                 if k.endswith("_ws_ps"):
@@ -507,8 +700,7 @@ class Optimizer:
             live_upstream_qor.append(
                 {"stage": s, "ws_ps": ws, "tns_ps": tns})
 
-        # 8) Final QoR: after all downstream stages succeed, run make finish
-        #    to obtain complete metrics (including area/power)
+        # ---- 8) Final QoR ----
         if failed_stage is not None:
             result = RunResult(
                 ok=False, variant=new_variant,
@@ -518,16 +710,24 @@ class Optimizer:
         else:
             result = self.runner.run_finish(stage_params, new_variant, iteration)
 
-        # 9) Register new nodes in tree (downstream stages only)
+        # ---- 9) Register new nodes in tree ----
         if result.ok:
             chain = [(s, new_variant, stage_params.get(s, {}),
-                      collected_stage_qor.get(s)) for s in downstream]
-            self._add_to_tree(iteration, branch_node_id, chain)
+                      collected_stage_qor.get(s)) for s in effective_downstream]
+            source_tid = (self._current_trial.trial_id
+                          if self._current_trial else None)
+            self._add_to_tree(iteration, actual_parent_node_id, chain,
+                              source_trial_id=source_tid)
 
-        # 10) Record history
+        # ---- 10) Record history (unchanged) ----
         self._record(iteration, stage_params, result, decision, stage_reasons)
 
-        # Stage C6: finalize trial record
+        # Resolution fields are merged into the current trial before recording
+        # but the QoR is not known until _finalize_trial, so update now.
+        if self._current_trial:
+            self._current_trial.execution_resolution = resolution
+
+        # ---- Stage C6: finalize trial record ----
         self._finalize_trial(
             status="ok" if result.ok else "failed",
             final_qor=result.qor,

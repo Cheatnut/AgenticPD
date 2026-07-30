@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from schemas.trial import (
     TrialRecord, StageResult, CheckpointRef, FailureClass,
+    MinimalObservation, DoomedDecision, GWTWDecision, DecisionTraceRef,
     append_trial_to_jsonl, load_trials_from_jsonl,
 )
 from managers import TrialManager
@@ -252,8 +253,8 @@ class TrialRecordIntegrationTest(unittest.TestCase):
     # Regression: session checkpoint isolation
     # ------------------------------------------------------------------
     def test_session_checkpoint_path_isolation(self):
-        """checkpoint.json is written in the correct session directory
-        when CheckpointManager.create() receives runs_dir.
+        """Per-stage checkpoint (checkpoints/<stage>.json) is written in the
+        correct session directory when CheckpointManager.create() receives runs_dir.
 
         Regression test for: P1 — CheckpointManager used default
         AGENTICPD_DIR/runs/ fallback instead of the session directory.
@@ -284,10 +285,11 @@ class TrialRecordIntegrationTest(unittest.TestCase):
             runs_dir=session_runs,
         )
 
-        # checkpoint.json must be in the session dir, not agenticpd/runs/
-        cp_path = session_runs / "iter-0-iso001" / "checkpoint.json"
+        # Per-stage checkpoint must be in the session dir, not agenticpd/runs/
+        # Stage D fix 2.1: checkpoints/<stage>.json replaces legacy checkpoint.json
+        cp_path = session_runs / "iter-0-iso001" / "checkpoints" / "FP.json"
         self.assertTrue(cp_path.is_file(),
-                        f"checkpoint.json not found in session dir: {cp_path}")
+                        f"checkpoints/FP.json not found in session dir: {cp_path}")
 
     # ------------------------------------------------------------------
     # Regression: empty manifest rejection
@@ -1113,6 +1115,263 @@ class CheckpointCreationOrderTest(unittest.TestCase):
                              "Finish StageResult.log_path should not be None")
         self.assertIsNotNone(finish_sr.report_path,
                              "Finish StageResult.report_path should not be None")
+
+
+# =============================================================================
+# Stage D decision contract tests
+# =============================================================================
+
+class StageDDecisionContractTest(unittest.TestCase):
+    """Multi-stage decision trace round-trip, backward compat, enum validation,
+    and paused lifecycle."""
+
+    # ------------------------------------------------------------------
+    # Multi-stage round-trip: PL + CTS decisions survive without overwrite
+    # ------------------------------------------------------------------
+    def test_doomed_multi_stage_roundtrip(self):
+        """A Trial with doomed_decisions at both PL and CTS preserves
+        both entries after to_dict/from_dict round-trip."""
+        dd_pl = DoomedDecision(
+            risk_class="soft_bad", risk_score=0.3,
+            reason_codes=["timing_negative"],
+            rule_version="1.0.0",
+        )
+        dd_cts = DoomedDecision(
+            risk_class="survivor", risk_score=0.9,
+            reason_codes=["timing_ok"],
+            rule_version="1.0.0",
+        )
+        tr = TrialRecord(
+            trial_id="multi_doomed",
+            status="ok",
+            doomed_decisions=[dd_pl, dd_cts],
+        )
+        self.assertEqual(len(tr.doomed_decisions), 2)
+        self.assertEqual(tr.doomed_decisions[0].risk_class, "soft_bad")
+        self.assertEqual(tr.doomed_decisions[1].risk_class, "survivor")
+
+        tr2 = TrialRecord.from_dict(tr.to_dict())
+        self.assertEqual(len(tr2.doomed_decisions), 2,
+                         "PL+CTS both survive round-trip")
+        self.assertEqual(tr2.doomed_decisions[0].risk_class, "soft_bad")
+        self.assertEqual(tr2.doomed_decisions[1].risk_class, "survivor")
+
+    def test_gwtw_multi_stage_roundtrip(self):
+        """A Trial with gwtw_decisions at both PL and CTS preserves
+        both entries after to_dict/from_dict round-trip."""
+        gd_pl = GWTWDecision(
+            action="continue", decision_stage="PL", rank=2,
+            scheduler_version="1.0.0",
+        )
+        gd_cts = GWTWDecision(
+            action="finish", decision_stage="CTS", rank=1,
+            scheduler_version="1.0.0",
+        )
+        tr = TrialRecord(
+            trial_id="multi_gwtw",
+            status="ok",
+            gwtw_decisions=[gd_pl, gd_cts],
+        )
+        self.assertEqual(len(tr.gwtw_decisions), 2)
+        self.assertEqual(tr.gwtw_decisions[0].action, "continue")
+        self.assertEqual(tr.gwtw_decisions[1].action, "finish")
+
+        tr2 = TrialRecord.from_dict(tr.to_dict())
+        self.assertEqual(len(tr2.gwtw_decisions), 2,
+                         "PL+CTS both survive round-trip")
+        self.assertEqual(tr2.gwtw_decisions[0].action, "continue")
+        self.assertEqual(tr2.gwtw_decisions[1].action, "finish")
+
+    # ------------------------------------------------------------------
+    # Old JSON backward compat
+    # ------------------------------------------------------------------
+    def test_old_json_no_decision_keys(self):
+        """Old Trial JSON without doomed_decisions or gwtw_decisions
+        loads with empty lists."""
+        old = {
+            "trial_id": "old_no_decisions",
+            "experiment_id": "legacy",
+            "status": "ok",
+            "params": {"FP": {}},
+            "stage_results": [],
+        }
+        tr = TrialRecord.from_dict(old)
+        self.assertEqual(tr.doomed_decisions, [])
+        self.assertEqual(tr.gwtw_decisions, [])
+        # Round-trip preserves emptiness
+        tr2 = TrialRecord.from_dict(tr.to_dict())
+        self.assertEqual(tr2.doomed_decisions, [])
+        self.assertEqual(tr2.gwtw_decisions, [])
+
+    def test_legacy_singular_key_accepted(self):
+        """Old JSON with singular 'doomed_decision' / 'gwtw_decision'
+        keys is still accepted and promoted to lists."""
+        legacy = {
+            "trial_id": "legacy_singular",
+            "experiment_id": "legacy",
+            "status": "ok",
+            "params": {"FP": {}},
+            "doomed_decision": {
+                "risk_class": "hard_dead",
+                "reason_codes": ["stage_failed"],
+                "input_evidence": {"stage": "PL"},
+            },
+            "gwtw_decision": {
+                "action": "pause",
+                "decision_stage": "PL",
+            },
+            "stage_results": [],
+        }
+        tr = TrialRecord.from_dict(legacy)
+        self.assertEqual(len(tr.doomed_decisions), 1,
+                         "Legacy singular doomed_decision → list of 1")
+        self.assertEqual(tr.doomed_decisions[0].risk_class, "hard_dead")
+        self.assertEqual(len(tr.gwtw_decisions), 1,
+                         "Legacy singular gwtw_decision → list of 1")
+        self.assertEqual(tr.gwtw_decisions[0].action, "pause")
+
+    # ------------------------------------------------------------------
+    # Enum validation
+    # ------------------------------------------------------------------
+    def test_doomed_decision_rejects_invalid_risk_class(self):
+        with self.assertRaises(ValueError):
+            DoomedDecision(risk_class="unknown_class")
+
+    def test_doomed_decision_accepts_valid_risk_classes(self):
+        for rc in ("hard_dead", "soft_bad", "survivor"):
+            dd = DoomedDecision(risk_class=rc)
+            self.assertEqual(dd.risk_class, rc)
+
+    def test_gwtw_decision_rejects_invalid_action(self):
+        with self.assertRaises(ValueError):
+            GWTWDecision(action="delete_trial", decision_stage="PL")
+
+    def test_gwtw_decision_rejects_invalid_decision_stage(self):
+        with self.assertRaises(ValueError):
+            GWTWDecision(action="continue", decision_stage="RT")
+
+    def test_gwtw_decision_accepts_valid_values(self):
+        for action in ("continue", "pause", "audit_continue", "fork", "finish"):
+            gd = GWTWDecision(action=action, decision_stage="PL")
+            self.assertEqual(gd.action, action)
+        for stage in ("PL", "CTS"):
+            gd = GWTWDecision(action="continue", decision_stage=stage)
+            self.assertEqual(gd.decision_stage, stage)
+
+    # ------------------------------------------------------------------
+    # Paused lifecycle: checkpoint preserved, no final_qor required
+    # ------------------------------------------------------------------
+    def test_paused_trial_preserves_checkpoint(self):
+        cp = CheckpointRef(
+            checkpoint_id="cp-paused-PL",
+            source_trial_id="paused_trial",
+            stage="PL",
+            param_hash="sha256:abc",
+            orfs_commit="unresolved",
+        )
+        tr = TrialRecord(
+            trial_id="paused_trial",
+            status="paused",
+            checkpoint=cp,
+            final_qor=None,
+            stage_results=[StageResult(stage="FP", status="ok", elapsed_s=10.0),
+                           StageResult(stage="PL", status="ok", elapsed_s=30.0)],
+        )
+        self.assertEqual(tr.status, "paused")
+        self.assertIsNotNone(tr.checkpoint)
+        self.assertEqual(tr.checkpoint.checkpoint_id, "cp-paused-PL")
+        self.assertIsNone(tr.final_qor)
+        self.assertFalse(tr.is_complete)
+
+        # Round-trip preserves paused state and checkpoint
+        tr2 = TrialRecord.from_dict(tr.to_dict())
+        self.assertEqual(tr2.status, "paused")
+        self.assertIsNotNone(tr2.checkpoint)
+        self.assertEqual(tr2.checkpoint.checkpoint_id, "cp-paused-PL")
+        self.assertFalse(tr2.is_complete)
+
+    def test_paused_trial_no_final_qor_is_legal(self):
+        """A paused trial without final_qor must not raise or fail validation."""
+        tr = TrialRecord(trial_id="paused_no_qor", status="paused",
+                         checkpoint=CheckpointRef(
+                             checkpoint_id="cp-x", source_trial_id="x",
+                             stage="PL", param_hash="sha256:abc",
+                             orfs_commit="unresolved"))
+        self.assertIsNone(tr.final_qor)
+        self.assertEqual(tr.status, "paused")
+        # Round-trip
+        tr2 = TrialRecord.from_dict(tr.to_dict())
+        self.assertIsNone(tr2.final_qor)
+        self.assertEqual(tr2.status, "paused")
+
+    # ------------------------------------------------------------------
+    # MinimalObservation round-trip
+    # ------------------------------------------------------------------
+    def test_minimal_observation_roundtrip(self):
+        obs = MinimalObservation(
+            trial_id="t001", stage="PL", status="ok",
+            stage_wns_ps=-1200.0, stage_tns_ps=-5000.0,
+            stage_elapsed_s=45.0, checkpoint_id="cp-t001-PL",
+        )
+        obs2 = MinimalObservation.from_dict(obs.to_dict())
+        self.assertEqual(obs2.trial_id, "t001")
+        self.assertEqual(obs2.stage_wns_ps, -1200.0)
+        self.assertEqual(obs2.stage_tns_ps, -5000.0)
+
+    # ------------------------------------------------------------------
+    # DecisionTraceRef
+    # ------------------------------------------------------------------
+    def test_decision_trace_ref_roundtrip(self):
+        ref = DecisionTraceRef(
+            decision_id="dtr-001",
+            trace_path="traces/decisions.jsonl",
+        )
+        self.assertEqual(ref.decision_id, "dtr-001")
+        ref2 = DecisionTraceRef.from_dict(ref.to_dict())
+        self.assertEqual(ref2.decision_id, "dtr-001")
+        self.assertEqual(ref2.trace_path, "traces/decisions.jsonl")
+
+    def test_decision_trace_ref_rejects_absolute_path(self):
+        with self.assertRaises(ValueError):
+            DecisionTraceRef(decision_id="x",
+                           trace_path="/absolute/path/trace.jsonl")
+
+    def test_decision_trace_ref_rejects_parent_traversal(self):
+        with self.assertRaises(ValueError):
+            DecisionTraceRef(decision_id="x",
+                           trace_path="../escape/trace.jsonl")
+
+    def test_decision_trace_ref_rejects_empty_path(self):
+        with self.assertRaises(ValueError):
+            DecisionTraceRef(decision_id="x", trace_path="")
+
+    def test_trial_multi_trace_ref_roundtrip(self):
+        """Trial with multiple decision_trace_refs survives round-trip."""
+        tr = TrialRecord(
+            trial_id="multi_ref",
+            status="ok",
+            decision_trace_refs=[
+                DecisionTraceRef(decision_id="dtr-pl",
+                                trace_path="traces/decisions.jsonl"),
+                DecisionTraceRef(decision_id="dtr-cts",
+                                trace_path="traces/decisions.jsonl"),
+            ],
+        )
+        self.assertEqual(len(tr.decision_trace_refs), 2)
+        tr2 = TrialRecord.from_dict(tr.to_dict())
+        self.assertEqual(len(tr2.decision_trace_refs), 2)
+        self.assertEqual(tr2.decision_trace_refs[0].decision_id, "dtr-pl")
+        self.assertEqual(tr2.decision_trace_refs[1].decision_id, "dtr-cts")
+
+    def test_old_json_decision_trace_refs_default_empty(self):
+        """Old JSON without decision_trace_refs loads with empty list."""
+        tr = TrialRecord.from_dict({
+            "trial_id": "old_no_refs",
+            "status": "ok",
+            "params": {},
+            "stage_results": [],
+        })
+        self.assertEqual(tr.decision_trace_refs, [])
 
 
 if __name__ == "__main__":

@@ -9,5 +9,11 @@ from schemas.trial import (
     FailureClass,
     StageResult,
     CheckpointRef,
+    CheckpointAuditEntry,
+    ExecutionResolution,
+    MinimalObservation,
+    DoomedDecision,
+    GWTWDecision,
+    DecisionTraceRef,
     TrialRecord,
 )

@@ -199,7 +199,12 @@ class CheckpointManager:
 
     def load(self, trial: TrialRecord, stage: str,
              runs_dir: Optional[Path] = None) -> Optional[CheckpointRef]:
-        """Load a checkpoint from the trial's artifact directory."""
+        """Load a checkpoint from the trial's artifact directory.
+
+        Tries the per-stage path (``checkpoints/<stage>.json``) first,
+        then falls back to the legacy single ``checkpoint.json`` (pre-Stage-D
+        fix 2.1) for backward compatibility.
+        """
         if not trial.artifact_dir:
             return None
         from schemas.trial import resolve_artifact_dir
@@ -208,16 +213,22 @@ class CheckpointManager:
             trial.artifact_dir, runs_dir or AGENTICPD_DIR / "runs")
         if trial_dir is None:
             return None
-        cp_path = trial_dir / "checkpoint.json"
-        if not cp_path.is_file():
-            return None
-        try:
-            data = json.loads(cp_path.read_text(encoding="utf-8"))
-            cp = CheckpointRef.from_dict(data)
-            if cp.stage == stage:
+
+        # 1) Per-stage path (Stage D fix 2.1)
+        cp_path = self._checkpoint_path(trial_dir, stage)
+        if cp_path.is_file():
+            cp = self._try_load_checkpoint(cp_path, stage)
+            if cp is not None:
                 return cp
-        except (json.JSONDecodeError, KeyError):
-            pass
+
+        # 2) Legacy single checkpoint.json (backward compat)
+        legacy_path = self._legacy_checkpoint_path(trial_dir)
+        if legacy_path.is_file():
+            cp = self._try_load_checkpoint(legacy_path, stage)
+            if cp is not None:
+                log.debug("Loaded checkpoint from legacy checkpoint.json (stage=%s)", stage)
+                return cp
+
         return None
 
     def load_from_dir(self, trial_dir: Path, stage: str) -> Optional[CheckpointRef]:
@@ -226,14 +237,36 @@ class CheckpointManager:
         This is the filesystem-level variant of ``load()`` — it does not
         require a TrialRecord object, so it can be called before the trial
         is fully loaded.
+
+        Tries per-stage path first, then legacy single checkpoint.json.
         """
-        cp_path = trial_dir / "checkpoint.json"
-        if not cp_path.is_file():
+        # 1) Per-stage path (Stage D fix 2.1)
+        cp_path = self._checkpoint_path(trial_dir, stage)
+        if cp_path.is_file():
+            cp = self._try_load_checkpoint(cp_path, stage)
+            if cp is not None:
+                return cp
+
+        # 2) Legacy single checkpoint.json (backward compat)
+        legacy_path = self._legacy_checkpoint_path(trial_dir)
+        if legacy_path.is_file():
+            cp = self._try_load_checkpoint(legacy_path, stage)
+            if cp is not None:
+                log.debug("Loaded checkpoint from legacy checkpoint.json (stage=%s)", stage)
+                return cp
+
+        return None
+
+    @staticmethod
+    def _try_load_checkpoint(path: Path, expected_stage: str) -> Optional[CheckpointRef]:
+        """Load a CheckpointRef from *path*; return None if missing, corrupt,
+        or stage mismatch."""
+        if not path.is_file():
             return None
         try:
-            data = json.loads(cp_path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
             cp = CheckpointRef.from_dict(data)
-            if cp.stage == stage:
+            if cp.stage == expected_stage:
                 return cp
         except (json.JSONDecodeError, KeyError):
             pass
@@ -283,9 +316,23 @@ class CheckpointManager:
         return h.hexdigest()
 
     @staticmethod
+    def _checkpoint_path(trial_dir: Path, stage: str) -> Path:
+        """Return the per-stage checkpoint path: ``checkpoints/<stage>.json``."""
+        return trial_dir / "checkpoints" / f"{stage}.json"
+
+    @staticmethod
+    def _legacy_checkpoint_path(trial_dir: Path) -> Path:
+        """Return the legacy single-checkpoint path (pre-Stage-D fix 2.1)."""
+        return trial_dir / "checkpoint.json"
+
+    @staticmethod
     def _write_checkpoint(trial: TrialRecord, cp: CheckpointRef,
                           runs_dir: Optional[Path] = None) -> None:
-        """Atomically write checkpoint.json inside the trial directory."""
+        """Atomically write checkpoints/<stage>.json inside the trial directory.
+
+        Per-stage persistence (Stage D fix 2.1): each stage gets its own file
+        so FP/PL/CTS checkpoints from the same trial never overwrite each other.
+        """
         if not trial.artifact_dir:
             return
         from schemas.trial import resolve_artifact_dir
@@ -295,8 +342,8 @@ class CheckpointManager:
         )
         if trial_dir is None:
             return
-        trial_dir.mkdir(parents=True, exist_ok=True)
-        cp_path = trial_dir / "checkpoint.json"
+        cp_path = CheckpointManager._checkpoint_path(trial_dir, cp.stage)
+        cp_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = cp_path.with_suffix(cp_path.suffix + ".tmp")
         tmp.write_text(
             json.dumps(cp.to_dict(), ensure_ascii=False, indent=2),
@@ -341,15 +388,23 @@ if __name__ == "__main__":
     runs_dir = tmpdir / "runs"
     runs_dir.mkdir(parents=True)
 
-    # Create fake artifact files for gcd/agenticpd_iter0 after FP stage
+    # Create fake artifact files for gcd/agenticpd_iter0 (FP + PL + CTS stages)
+    variant = "agenticpd_iter0"
     for cat in ("results", "logs", "reports"):
-        d = flow_dir / cat / "sky130hd" / "gcd" / "agenticpd_iter0"
+        d = flow_dir / cat / "sky130hd" / "gcd" / variant
         d.mkdir(parents=True)
-    # Write a known file to hash
-    fp_odb = flow_dir / "results" / "sky130hd" / "gcd" / "agenticpd_iter0" / "2_floorplan.odb"
+    fp_odb = flow_dir / "results" / "sky130hd" / "gcd" / variant / "2_floorplan.odb"
     fp_odb.write_text("fake odb content for floorplan")
-    fp_sdc = flow_dir / "results" / "sky130hd" / "gcd" / "agenticpd_iter0" / "2_floorplan.sdc"
+    fp_sdc = flow_dir / "results" / "sky130hd" / "gcd" / variant / "2_floorplan.sdc"
     fp_sdc.write_text("fake sdc content")
+    pl_odb = flow_dir / "results" / "sky130hd" / "gcd" / variant / "3_place.odb"
+    pl_odb.write_text("fake odb content for placement")
+    pl_sdc = flow_dir / "results" / "sky130hd" / "gcd" / variant / "3_place.sdc"
+    pl_sdc.write_text("fake sdc content for placement")
+    cts_odb = flow_dir / "results" / "sky130hd" / "gcd" / variant / "4_cts.odb"
+    cts_odb.write_text("fake odb content for cts")
+    cts_sdc = flow_dir / "results" / "sky130hd" / "gcd" / variant / "4_cts.sdc"
+    cts_sdc.write_text("fake sdc content for cts")
 
     # Create a trial record with absolute artifact_dir for self-test tempdir
     from schemas.trial import TrialRecord
@@ -359,26 +414,42 @@ if __name__ == "__main__":
         status="ok",
         artifact_dir=str(runs_dir / "test0001"),
     )
-    # Write trial.json so checkpoint has a home
     (runs_dir / "test0001").mkdir(parents=True)
 
     mgr = CheckpointManager(flow_dir)
 
-    # -- Create checkpoint --
+    # -- Create FP checkpoint (per-stage path: checkpoints/FP.json) --
     phash = CheckpointManager.param_hash({"FP": {"CORE_UTILIZATION": 38}})
     cp = mgr.create(
         trial=trial,
         stage="FP",
         platform="sky130hd",
         design="gcd",
-        variant="agenticpd_iter0",
+        variant=variant,
         param_hash=phash,
     )
     check(cp.checkpoint_id == "cp-test0001-FP", "checkpoint id format")
     check(len(cp.artifact_manifest) >= 1, "manifest has >=1 files")
     check(cp.param_hash == phash, "param_hash preserved")
     check(cp.stage == "FP", "stage preserved")
-    check(Path(trial.artifact_dir, "checkpoint.json").is_file(), "checkpoint.json written")
+    # Stage D fix 2.1: per-stage path
+    check((Path(trial.artifact_dir) / "checkpoints" / "FP.json").is_file(),
+          "per-stage checkpoint: checkpoints/FP.json written")
+    check(not (Path(trial.artifact_dir) / "checkpoint.json").exists(),
+          "per-stage checkpoint: legacy checkpoint.json NOT written")
+
+    # -- Create PL + CTS checkpoints in the SAME trial → no overwrite --
+    cp_pl = mgr.create(trial, "PL", "sky130hd", "gcd", variant, phash)
+    check(cp_pl.stage == "PL", "PL checkpoint stage")
+    check((Path(trial.artifact_dir) / "checkpoints" / "PL.json").is_file(),
+          "per-stage checkpoint: checkpoints/PL.json written")
+    cp_cts = mgr.create(trial, "CTS", "sky130hd", "gcd", variant, phash)
+    check(cp_cts.stage == "CTS", "CTS checkpoint stage")
+    check((Path(trial.artifact_dir) / "checkpoints" / "CTS.json").is_file(),
+          "per-stage checkpoint: checkpoints/CTS.json written")
+    # Verify FP checkpoint still intact (not overwritten)
+    check((Path(trial.artifact_dir) / "checkpoints" / "FP.json").is_file(),
+          "FP checkpoint survives PL+CTS creation (no overwrite)")
 
     # -- Verify: files exist and hashes match --
     is_ok, errors = mgr.verify(cp)
@@ -418,16 +489,40 @@ if __name__ == "__main__":
     h2 = CheckpointManager.param_hash({"FP": {"B": 2, "A": 1}})
     check(h1 == h2, "param_hash: key-order independent")
 
-    # -- Load checkpoint from trial directory --
-    cp_loaded = mgr.load(trial, "FP")
-    check(cp_loaded is not None, "load checkpoint from trial dir")
-    check(cp_loaded.checkpoint_id == cp.checkpoint_id, "loaded checkpoint id matches")
+    # -- Load per-stage checkpoints --
+    cp_fp_loaded = mgr.load(trial, "FP")
+    check(cp_fp_loaded is not None, "load FP checkpoint from trial dir")
+    check(cp_fp_loaded.checkpoint_id == cp.checkpoint_id, "loaded FP checkpoint id matches")
+    cp_pl_loaded = mgr.load(trial, "PL")
+    check(cp_pl_loaded is not None, "load PL checkpoint from trial dir")
+    check(cp_pl_loaded.stage == "PL", "loaded PL checkpoint stage matches")
+    cp_cts_loaded = mgr.load(trial, "CTS")
+    check(cp_cts_loaded is not None, "load CTS checkpoint from trial dir")
+    check(cp_cts_loaded.stage == "CTS", "loaded CTS checkpoint stage matches")
 
     # -- Load non-existent stage --
-    check(mgr.load(trial, "CTS") is None, "load non-existent stage -> None")
+    check(mgr.load(trial, "RT") is None, "load non-existent stage RT -> None")
+
+    # -- Legacy backward compat: single checkpoint.json --
+    # Simulate an old trial where only a single checkpoint.json exists.
+    legacy_trial_dir = runs_dir / "legacy_test"
+    legacy_trial_dir.mkdir(parents=True)
+    legacy_cp = CheckpointRef(
+        checkpoint_id="cp-legacy-FP", source_trial_id="legacy",
+        stage="FP", param_hash=phash, orfs_commit="unresolved",
+        artifact_manifest=cp.artifact_manifest,
+        artifact_dir=f"results/sky130hd/gcd/{variant}",
+    )
+    (legacy_trial_dir / "checkpoint.json").write_text(
+        json.dumps(legacy_cp.to_dict(), ensure_ascii=False, indent=2))
+    legacy_loaded = mgr.load_from_dir(legacy_trial_dir, "FP")
+    check(legacy_loaded is not None, "legacy checkpoint.json load: FP found")
+    check(legacy_loaded.checkpoint_id == "cp-legacy-FP", "legacy checkpoint.json: id matches")
+    # Legacy with wrong stage → None
+    check(mgr.load_from_dir(legacy_trial_dir, "CTS") is None,
+          "legacy checkpoint.json: wrong stage -> None")
 
     # -- Session isolation: create() with runs_dir writes to correct session dir --
-    # Simulate a session-specific runs_dir (not agenticpd/runs/ default).
     session_runs = tmpdir / "session_runs" / "sky130hd_gcd" / "checkpoint_fork" / "20260729_test"
     session_runs.mkdir(parents=True)
     trial2 = TrialRecord(
@@ -440,15 +535,15 @@ if __name__ == "__main__":
     mgr.create(
         trial=trial2, stage="FP",
         platform="sky130hd", design="gcd",
-        variant="agenticpd_iter0", param_hash=phash,
+        variant=variant, param_hash=phash,
         runs_dir=session_runs,
     )
-    cp_session_path = session_runs / "iter-0-test0002" / "checkpoint.json"
+    cp_session_path = session_runs / "iter-0-test0002" / "checkpoints" / "FP.json"
     check(cp_session_path.is_file(),
-          "session isolation: checkpoint.json written in session dir")
+          "session isolation: checkpoints/FP.json written in session dir")
     # Verify no leak to default fallback location.
     import config as _cfg
-    default_leak = _cfg.AGENTICPD_DIR / "runs" / "iter-0-test0002" / "checkpoint.json"
+    default_leak = _cfg.AGENTICPD_DIR / "runs" / "iter-0-test0002" / "checkpoints" / "FP.json"
     check(not default_leak.exists(),
           "session isolation: no leak to default AGENTICPD_DIR/runs/")
 
