@@ -73,10 +73,97 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resume", nargs="?", const="latest", default=None,
                         metavar="RUN_DIR",
                         help="Resume from a previous run directory (default: latest)")
+    parser.add_argument("--stage-d", type=str, default=None,
+                        metavar="YAML",
+                        help="Run Stage D GWTW orchestration from experiment YAML")
     parser.add_argument("--log-level", type=str, default="INFO",
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
                         help="Log level (DEBUG prints full prompts)")
     return parser.parse_args()
+
+
+def _run_stage_d(args, yaml_path: Path) -> None:
+    """Stage D dedicated entry: YAML is sole authority.
+
+    Diverges from the generic main() path BEFORE run_dir / FrameworkConfig
+    / logging / runner creation.  Everything — run_dir, snapshot, runner,
+    managers — is derived from the YAML-backed StageDConfig.
+    """
+    from orchestrator import StageDConfig, StageDOrchestrator
+    from managers import TrialManager, CheckpointManager
+
+    # 1) Parse and validate YAML first — nothing else exists yet.
+    sd_cfg = StageDConfig.from_yaml(yaml_path)
+
+    # 2) Derive FrameworkConfig from YAML (design/platform authority).
+    fw = sd_cfg.to_framework_config()
+    if not fw.flow_dir:
+        fw.flow_dir = Path("flow")
+
+    # 3) Create run_dir from YAML experiment_id + timestamp.
+    design_dir = get_design_runs_dir(fw.platform, fw.design)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = design_dir / f"{sd_cfg.experiment_id}_{ts}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    sd_cfg.runs_dir = run_dir
+    fw.run_dir = run_dir
+
+    # 4) Setup logging to the Stage D run_dir.
+    log_file = run_dir / "agenticpd.log"
+    setup_logging(log_file, level=getattr(logging, args.log_level))
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("openai").setLevel(logging.WARNING)
+    log.info("[MAIN] Stage D start: experiment=%s platform=%s design=%s "
+             "run_dir=%s", sd_cfg.experiment_id, fw.platform, fw.design,
+             run_dir)
+
+    # 5) Write config snapshot — unique to this Stage D run.
+    snapshot = {
+        "mode": "stage-d",
+        "experiment_id": sd_cfg.experiment_id,
+        "platform": fw.platform,
+        "design": fw.design,
+        "population_size": sd_cfg.population_size,
+        "seed": sd_cfg.seed,
+        "max_trials": sd_cfg.max_trials,
+        "wall_clock_budget_s": sd_cfg.wall_clock_budget_s,
+        "evaluator": sd_cfg.evaluator,
+        "pl_survivor_count": sd_cfg.pl_survivor_count,
+        "pl_audit_quota": sd_cfg.pl_audit_quota,
+        "cts_survivor_count": sd_cfg.cts_survivor_count,
+        "cts_audit_quota": sd_cfg.cts_audit_quota,
+        "doomed_rule_version": sd_cfg.doomed_rule_version,
+        "scheduler_version": sd_cfg.scheduler_version,
+        "planner_version": sd_cfg.planner_version,
+        "framework_config": fw.to_dict(),
+        "yaml_path": str(yaml_path.resolve()),
+    }
+    (run_dir / "config_snapshot.json").write_text(
+        json.dumps(snapshot, ensure_ascii=False, indent=2),
+        encoding="utf-8")
+
+    # 6) Create runner from YAML-derived FrameworkConfig.
+    if args.mock_orfs:
+        from orfs.interface import MockORFSRunner
+        runner = MockORFSRunner(fw)
+    else:
+        from orfs.interface import ORFSRunner
+        runner = ORFSRunner(fw)
+
+    # 7) Create managers and orchestrator, then run.
+    trial_mgr = TrialManager(run_dir)
+    checkpoint_mgr = CheckpointManager(fw.flow_dir)
+    orch = StageDOrchestrator(sd_cfg, trial_mgr, checkpoint_mgr, runner)
+    result = orch.run()
+
+    log.info("[MAIN] Stage D complete: total_trials=%d budget_remaining=%d "
+             "errors=%s resumed=%s",
+             result.total_trials, result.budget_remaining,
+             result.errors, result.resumed)
+    if result.errors:
+        for err in result.errors:
+            log.error("[MAIN] Stage D error: %s", err)
+        sys.exit(1)
 
 
 def resolve_run_dir(resume: Optional[str], platform: str, design: str) -> Path:
@@ -176,6 +263,19 @@ def main() -> None:
     # 1) Load .env (API key via env var only, never hardcoded)
     load_dotenv_file(AGENTICPD_DIR / ENV_FILENAME)
 
+    # ------------------------------------------------------------------
+    # Stage D: YAML is sole authority.  Divert BEFORE generic run_dir /
+    # FrameworkConfig / logging creation so no stale session directory
+    # is left on disk.
+    # ------------------------------------------------------------------
+    if args.stage_d:
+        yaml_path = Path(args.stage_d)
+        if not yaml_path.is_file():
+            log.error("Stage D YAML not found: %s", yaml_path)
+            sys.exit(1)
+        _run_stage_d(args, yaml_path)
+        return
+
     # 2) Working directory & logging
     # Resolve platform/design early (before run_dir) so the session
     # directory can be placed under runs/<platform>_<design>/.
@@ -197,12 +297,11 @@ def main() -> None:
 
     runner = MockORFSRunner(cfg) if args.mock_orfs else ORFSRunner(cfg)
 
-    # Wipe ALL stale agenticpd variants from previous runs before starting.
-    # Without this, a new run with fewer iterations leaves behind old higher-
-    # numbered variant directories (e.g. old run had 10 iters → iter4..9 persist).
-    n_wiped = runner.wipe_all_variants()
-    if n_wiped:
-        log.debug('[MAIN] pre-run wiped %d stale variant directories from previous run', n_wiped)
+    # Wipe stale variants only for fresh runs (not resume).
+    if not args.resume:
+        n_wiped = runner.wipe_all_variants()
+        if n_wiped:
+            log.debug('[MAIN] pre-run wiped %d stale variant directories', n_wiped)
 
     if args.baseline_only:
         # Baseline only: no LLM needed, run iteration #0 directly

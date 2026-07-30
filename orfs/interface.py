@@ -306,6 +306,46 @@ class ORFSRunner:
             if d.is_dir():
                 shutil.rmtree(d)
 
+    def clean_downstream(self, variant: str,
+                         from_stage: str) -> List[str]:
+        """Public interface: run ORFS make clean targets for downstream
+        stages after a checkpoint fork.
+
+        After copying a parent variant's directory trees, the new variant
+        inherits ALL artifacts including downstream stages that haven't
+        been re-executed yet.  Stale artifacts would cause make to skip
+        stages, producing QoR/reports that don't correspond to the current
+        parameters.
+
+        Runs the official ORFS ``make clean_<stage>`` for *from_stage*
+        and every stage after it through finish.  Does NOT rely on
+        file-name-pattern heuristics.
+
+        Returns the list of clean targets that were executed.
+        """
+        return self._clean_downstream_stages(variant, from_stage)
+
+    def _clean_downstream_stages(self, variant: str,
+                                  from_stage: str) -> List[str]:
+        """Internal: execute downstream clean make targets.
+
+        Stage D fix 2.2 (revised): see :meth:`clean_downstream` for the
+        public contract.
+        """
+        from orfs.parser import downstream_clean_targets
+        from orfs.runner import run_clean_make
+
+        targets = downstream_clean_targets(from_stage)
+        if not targets:
+            return []
+
+        for target in targets:
+            run_clean_make(self.cfg, variant, target)
+
+        log.info("[ORFS] Cleaned %d downstream stages from %s (targets=%s)",
+                 len(targets), variant, targets)
+        return targets
+
     def wipe_all_variants(self) -> int:
         """Wipe ALL existing agenticpd variant directories before a new run.
 
@@ -378,6 +418,19 @@ class MockORFSRunner(ORFSRunner):
         # files, so creating empty results/logs/reports/objects directories
         # would mislead callers into thinking real artifacts exist.
         pass
+
+    def clean_downstream(self, variant: str,
+                         from_stage: str) -> list:
+        """Public interface: return the list of clean targets that would
+        be executed (no real files to clean in mock mode)."""
+        return self._clean_downstream_stages(variant, from_stage)
+
+    def _clean_downstream_stages(self, variant: str,
+                                  from_stage: str) -> list:
+        # No-op: MockORFSRunner has no real files to clean.
+        # Returns the target list for test assertions.
+        from orfs.parser import downstream_clean_targets
+        return downstream_clean_targets(from_stage)
 
     def export_best(self, variant, best_entry):
         d = self.cfg.results_dir(self.cfg.best_variant_name)

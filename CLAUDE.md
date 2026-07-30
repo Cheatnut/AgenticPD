@@ -2,7 +2,7 @@
 
 AgenticPD 是可复现、可审计、可比较的 Flow Optimization 实验平台；A–H 总纲见 `docs/AgenticPD八阶段迭代计划.md`。
 
-本规范适用于本目录及子目录。Claude 是执行者：只按 Codex 已确认的 Plan 实现，不擅自改变阶段边界、架构或实验口径。
+本规范适用于本目录及子目录。Claude 是执行者：只按 Codex 已确认的 Plan 实现，不擅自改变阶段边界、架构或实验口径。完整协作流程以 `docs/WORKFLOW.md` 为唯一真相源；本文件只补充 Claude 的角色边界和工程约定。
 
 ## 常用命令
 
@@ -105,10 +105,11 @@ main.py → FrameworkConfig → Optimizer
 
 ## 执行与阶段
 
-- 开始前阅读 `docs/plans/stage-<letter>/stage-<letter>-plan.md`；歧义、冲突、范围变化或计划缺失先反馈 Codex。
+- 开始前阅读 `docs/WORKFLOW.md`、`docs/plans/stage-<letter>/stage-<letter>-plan.md`，并在 `HANDOVER.md` 存在时读取它；歧义、冲突、范围变化或计划缺失先反馈 Codex。
 - 不得创建、修改或补写 Plan、验收报告或后续阶段内容；不得提前实现后续阶段。
-- 仅实现当前 Plan；收到 Codex 建议后，以最小改动修复，不顺带重构或修改无关文件。
+- 以一次性交付包为实现单位，集中完成其中全部 P0/P1 和必要回归；不得只修点名行而忽略相邻接口，也不得顺带重构或修改无关文件。
 - 完成后报告改动、测试、遗留风险和计划偏离，等待 Codex 审查；不自行 commit、merge 或 push。
+- 交付和返工格式严格遵守 `docs/WORKFLOW.md`，测试名称必须与关键断言实际证明的行为一致。
 - 每阶段使用独立 `agenticpd-stage-<letter>` 分支，不得混入其他阶段；删除、重写历史、`.env`/密钥/CI/CD、数据库迁移、全局依赖或系统配置先获用户授权。
 
 ## 文档与语言

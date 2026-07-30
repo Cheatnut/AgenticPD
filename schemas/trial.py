@@ -172,6 +172,277 @@ class CheckpointRef:
 
 
 # =============================================================================
+# 3a. CheckpointAuditEntry — per-checkpoint audit record during resolution
+# =============================================================================
+
+
+@dataclass
+class CheckpointAuditEntry:
+    """Immutable audit record for one checkpoint examined during resolution.
+
+    Each entry captures the full verification and compatibility result for a
+    single checkpoint, preserving the decision trail so fallback decisions
+    remain traceable after the fact.
+
+    When the entry represents a consumed checkpoint, ``rejection_reason`` is
+    None and ``is_compatible`` is True.  When the entry represents a rejected
+    checkpoint, ``rejection_reason`` explains why it was skipped.
+    """
+
+    checkpoint_id: str                        # "cp-<trial_id>-<stage>"
+    stage: str                                # "FP" | "PL" | "CTS"
+    source_trial_id: str                      # trial that produced this checkpoint
+    manifest_verified: bool = False           # did artifact files pass existence + hash checks?
+    manifest_errors: List[str] = field(default_factory=list)  # human-readable manifest issues
+    compatibility_checked: bool = False       # was param compatibility checked?
+    is_compatible: bool = False               # are params compatible with this checkpoint?
+    invalidating_parameters: List[str] = field(default_factory=list)  # params that caused rejection
+    rejection_reason: Optional[str] = None    # None if consumed; else why rejected
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "CheckpointAuditEntry":
+        return cls(**{k: v for k, v in d.items()
+                      if k in cls.__dataclass_fields__})
+
+
+# =============================================================================
+# 3b. ExecutionResolution — how the optimizer resolved a branch request
+# =============================================================================
+
+
+@dataclass
+class ExecutionResolution:
+    """Immutable record of checkpoint resolution for one trial.
+
+    Records the gap between what the Judge/Policy requested and what was
+    actually executed after checkpoint manifest verification and parameter
+    compatibility checking.
+
+    This is stored as an optional ``execution_resolution`` field on
+    TrialRecord — separate from the ``checkpoint`` field which records
+    the checkpoint *produced* by this trial.
+    """
+
+    # ---- What was requested ----
+    requested_parent_node_id: str          # tree node the Judge/Policy chose
+    requested_start_stage: str             # "FP" | "PL" | "CTS" | "RT"
+
+    # ---- What was actually executed ----
+    effective_start_stage: str             # "FP" | "PL" | "CTS" | "RT"
+    execution_mode: str                    # "checkpoint_fork" | "full_restart"
+
+    # ---- Checkpoint consumed (null for full_restart) ----
+    consumed_checkpoint: Optional[str] = None  # checkpoint_id, or None
+    consumed_node_id: Optional[str] = None     # tree node id that produced the cp
+    consumed_variant: Optional[str] = None     # FLOW_VARIANT of the consumed cp source
+
+    # ---- Manifest verification ----
+    manifest_verified: bool = False
+    manifest_errors: List[str] = field(default_factory=list)
+
+    # ---- Compatibility check ----
+    compatibility_checked: bool = False
+    is_compatible: bool = False
+    invalidating_parameters: List[str] = field(default_factory=list)
+
+    # ---- Fallback rationale ----
+    fallback_reason: Optional[str] = None
+
+    # ---- Full audit trail: every checkpoint examined, in order ----
+    checkpoint_audit_trail: List[CheckpointAuditEntry] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        d = asdict(self)
+        # Convert audit entries to plain dicts
+        d["checkpoint_audit_trail"] = [
+            e.to_dict() for e in self.checkpoint_audit_trail
+        ]
+        return d
+
+    @classmethod
+    def from_dict(cls, d: Optional[Dict[str, Any]]) -> Optional["ExecutionResolution"]:
+        """Deserialize from dict; returns None for null/missing input
+        (backward compat: old Trial JSON has no execution_resolution)."""
+        if not d:
+            return None
+        # Parse audit trail entries (backward compat: missing key → empty list)
+        audit_raw = d.get("checkpoint_audit_trail", [])
+        audit_trail = [CheckpointAuditEntry.from_dict(e) for e in audit_raw]
+        kwargs = {k: v for k, v in d.items()
+                  if k in cls.__dataclass_fields__}
+        kwargs["checkpoint_audit_trail"] = audit_trail
+        return cls(**kwargs)
+
+
+# =============================================================================
+# 3c. MinimalObservation — stage-level observation for Doomed/GWTW input
+# =============================================================================
+
+
+@dataclass
+class MinimalObservation:
+    """Minimal per-trial observation at a decision stage (PL or CTS).
+
+    Captures just enough data for the rule-based DoomedPredictor and
+    GWTWScheduler to make a decision.  This is intentionally minimal —
+    full trajectory features belong to Stage E.
+    """
+
+    trial_id: str                              # which trial this observation belongs to
+    stage: str                                 # "PL" | "CTS" — the decision stage
+    status: str                                # "ok" | "failed" | "running" | "paused"
+    stage_wns_ps: Optional[float] = None       # WNS at this stage (ps); None if unavailable
+    stage_tns_ps: Optional[float] = None       # TNS at this stage (ps); None if unavailable
+    stage_elapsed_s: float = 0.0               # wall-clock seconds up to this stage
+    failure_type: Optional[str] = None         # FailureClass value if failed; None otherwise
+    checkpoint_id: Optional[str] = None        # checkpoint produced at this stage
+    parent_trial_id: Optional[str] = None      # lineage
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: Optional[Dict[str, Any]]) -> Optional["MinimalObservation"]:
+        """Deserialize from dict; returns None for null/missing input."""
+        if not d:
+            return None
+        return cls(**{k: v for k, v in d.items()
+                      if k in cls.__dataclass_fields__})
+
+
+# =============================================================================
+# 3d. DoomedDecision — rule-based risk assessment result
+# =============================================================================
+
+
+@dataclass
+class DoomedDecision:
+    """Output of the rule-based DoomedPredictor for one trial at one stage.
+
+    ``risk_score`` is a relative ranking within the same stage cohort, NOT a
+    calibrated probability.  ``reason_codes`` are machine-readable slugs
+    suitable for filtering and auditing.
+    """
+
+    risk_class: str                # "hard_dead" | "soft_bad" | "survivor"
+    risk_score: float = 0.0        # relative rank within cohort (lower = worse)
+    reason_codes: List[str] = field(default_factory=list)  # e.g. ["timing_negative", "stage_failed"]
+    rule_version: str = "0.0.0"    # predictor rule-set version
+    # Snapshot of the MinimalObservation + cohort context fed to the predictor
+    input_evidence: Dict[str, Any] = field(default_factory=dict)
+
+    _VALID_RISK_CLASSES = frozenset({"hard_dead", "soft_bad", "survivor"})
+
+    def __post_init__(self) -> None:
+        if self.risk_class not in self._VALID_RISK_CLASSES:
+            raise ValueError(
+                f"Invalid risk_class {self.risk_class!r}; "
+                f"must be one of {sorted(self._VALID_RISK_CLASSES)}")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: Optional[Dict[str, Any]]) -> Optional["DoomedDecision"]:
+        """Deserialize from dict; returns None for null/missing input."""
+        if not d:
+            return None
+        return cls(**{k: v for k, v in d.items()
+                      if k in cls.__dataclass_fields__})
+
+
+# =============================================================================
+# 3e. GWTWDecision — scheduler action for one trial
+# =============================================================================
+
+
+@dataclass
+class GWTWDecision:
+    """Output of the serial async GWTWScheduler for one trial at one decision
+    stage.
+
+    The action determines what happens to the trial after the cohort reaches a
+    decision stage (PL or CTS).
+    """
+
+    action: str                       # "continue" | "pause" | "audit_continue" | "fork" | "finish"
+    decision_stage: str               # "PL" | "CTS" — which stage triggered this decision
+    rank: int = 0                     # cohort rank at decision time
+    parent_trial_id: Optional[str] = None   # survivor parent (for fork actions)
+    child_trial_id: Optional[str] = None    # new trial spawned by fork action
+    is_audit_pass: bool = False       # True when audit quota overrides soft_bad
+    scheduler_version: str = "0.0.0"  # scheduler rule-set version
+
+    _VALID_ACTIONS = frozenset({"continue", "pause", "audit_continue", "fork", "finish"})
+    _VALID_DECISION_STAGES = frozenset({"PL", "CTS"})
+
+    def __post_init__(self) -> None:
+        if self.action not in self._VALID_ACTIONS:
+            raise ValueError(
+                f"Invalid action {self.action!r}; "
+                f"must be one of {sorted(self._VALID_ACTIONS)}")
+        if self.decision_stage not in self._VALID_DECISION_STAGES:
+            raise ValueError(
+                f"Invalid decision_stage {self.decision_stage!r}; "
+                f"must be one of {sorted(self._VALID_DECISION_STAGES)}")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: Optional[Dict[str, Any]]) -> Optional["GWTWDecision"]:
+        """Deserialize from dict; returns None for null/missing input."""
+        if not d:
+            return None
+        return cls(**{k: v for k, v in d.items()
+                      if k in cls.__dataclass_fields__})
+
+
+# =============================================================================
+# 3f. DecisionTraceRef — stable reference to an append-only decision trace entry
+# =============================================================================
+
+
+@dataclass
+class DecisionTraceRef:
+    """Lightweight reference to one entry in the append-only decision trace
+    JSONL file.  The actual decision object (DoomedDecision or GWTWDecision)
+    lives in the trace file; this ref lets a Trial point to its entries
+    without embedding full nested objects.
+
+    ``trace_path`` must be a relative path (no absolute paths, no ``..``
+    traversal) pointing to the JSONL file from the session runs directory.
+    """
+
+    decision_id: str          # unique identifier of the decision entry
+    trace_path: str           # relative path to the trace JSONL file
+
+    def __post_init__(self) -> None:
+        if not self.trace_path:
+            raise ValueError("trace_path must not be empty")
+        if self.trace_path.startswith("/"):
+            raise ValueError(
+                f"trace_path must be relative, got absolute: {self.trace_path!r}")
+        if ".." in Path(self.trace_path).parts:
+            raise ValueError(
+                f"trace_path must not contain '..': {self.trace_path!r}")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: Optional[Dict[str, Any]]) -> Optional["DecisionTraceRef"]:
+        """Deserialize from dict; returns None for null/missing input."""
+        if not d:
+            return None
+        return cls(**{k: v for k, v in d.items()
+                      if k in cls.__dataclass_fields__})
+
+
+# =============================================================================
 # 4. TrialRecord — complete record of one RTL-to-GDS run
 # =============================================================================
 
@@ -198,7 +469,7 @@ class TrialRecord:
     branch_stage: Optional[str] = None          # "FP" | "PL" | "CTS" | "RT" | None (full restart)
 
     # ---- Lifecycle ----
-    status: str = "running"                     # "running" | "ok" | "failed"
+    status: str = "running"                     # "running" | "ok" | "failed" | "paused"
     start_time: Optional[str] = None
     end_time: Optional[str] = None
 
@@ -221,6 +492,20 @@ class TrialRecord:
 
     # ---- Checkpoint (produced by this trial, if successful) ----
     checkpoint: Optional[CheckpointRef] = None
+
+    # ---- Execution resolution (how this trial's branch request was resolved) ----
+    execution_resolution: Optional[ExecutionResolution] = None
+
+    # ---- Stage D decision trace (Doomed + GWTW) ----
+    # Lists hold one entry per decision stage (PL, CTS) so PL decisions
+    # are never overwritten by later CTS decisions.  When the append-only
+    # JSONL trace is implemented, each entry can carry a stable file
+    # reference in addition to the inline data.
+    doomed_decisions: List[DoomedDecision] = field(default_factory=list)
+    gwtw_decisions: List[GWTWDecision] = field(default_factory=list)
+
+    # ---- Decision trace references (append-only JSONL pointers) ----
+    decision_trace_refs: List[DecisionTraceRef] = field(default_factory=list)
 
     # ---- Reproducibility ----
     config_hash: Optional[str] = None           # sha256 of resolved config
@@ -279,6 +564,11 @@ class TrialRecord:
         d["failure"] = self.failure.value if self.failure else None
         d["error_message"] = self.error_message
         d["checkpoint"] = self.checkpoint.to_dict() if self.checkpoint else None
+        d["execution_resolution"] = (self.execution_resolution.to_dict()
+                                     if self.execution_resolution else None)
+        d["doomed_decisions"] = [dd.to_dict() for dd in self.doomed_decisions]
+        d["gwtw_decisions"] = [gd.to_dict() for gd in self.gwtw_decisions]
+        d["decision_trace_refs"] = [r.to_dict() for r in self.decision_trace_refs]
         d["config_hash"] = self.config_hash
         d["env_hash"] = self.env_hash
         d["artifact_dir"] = self.artifact_dir
@@ -294,6 +584,31 @@ class TrialRecord:
         checkpoint = d.get("checkpoint")
         if checkpoint:
             checkpoint = CheckpointRef.from_dict(checkpoint)
+        execution_resolution = ExecutionResolution.from_dict(d.get("execution_resolution"))
+        # Backward compat: old JSON may have singular "doomed_decision" /
+        # "gwtw_decision" keys (null or object).  Accept both shapes.
+        doomed_raw = d.get("doomed_decisions", None)
+        if doomed_raw is None:
+            # Fall back to legacy singular key
+            legacy_dd = d.get("doomed_decision")
+            doomed_raw = [legacy_dd] if legacy_dd else []
+        doomed_decisions = [
+            dd for dd in (DoomedDecision.from_dict(e) for e in doomed_raw)
+            if dd is not None
+        ]
+        gwtw_raw = d.get("gwtw_decisions", None)
+        if gwtw_raw is None:
+            legacy_gd = d.get("gwtw_decision")
+            gwtw_raw = [legacy_gd] if legacy_gd else []
+        gwtw_decisions = [
+            gd for gd in (GWTWDecision.from_dict(e) for e in gwtw_raw)
+            if gd is not None
+        ]
+        decision_trace_refs = [
+            r for r in (DecisionTraceRef.from_dict(e)
+                        for e in d.get("decision_trace_refs", []))
+            if r is not None
+        ]
         return cls(
             trial_id=d["trial_id"],
             experiment_id=d.get("experiment_id", "unknown"),
@@ -309,6 +624,10 @@ class TrialRecord:
             failure=failure,
             error_message=d.get("error_message"),
             checkpoint=checkpoint,
+            execution_resolution=execution_resolution,
+            doomed_decisions=doomed_decisions,
+            gwtw_decisions=gwtw_decisions,
+            decision_trace_refs=decision_trace_refs,
             config_hash=d.get("config_hash"),
             env_hash=d.get("env_hash"),
             artifact_dir=d.get("artifact_dir"),
@@ -317,7 +636,7 @@ class TrialRecord:
     # ---- Validation ----
 
     def __post_init__(self) -> None:
-        if self.status not in ("running", "ok", "failed"):
+        if self.status not in ("running", "ok", "failed", "paused"):
             raise ValueError(f"Unknown status: {self.status}")
         if self.status == "failed" and self.failure is None:
             # Auto-classify if possible
@@ -485,6 +804,215 @@ if __name__ == "__main__":
     check(tr2.failure == FailureClass.TOOL_CRASH, "TrialRecord roundtrip failure")
     check(tr2.stage_results[1].elapsed_s == 45.0, "TrialRecord roundtrip stage elapsed")
     check(tr2.elapsed_s > 0, "TrialRecord elapsed_s computed")
+
+    # -- MinimalObservation --
+    obs = MinimalObservation(
+        trial_id="test001", stage="PL", status="ok",
+        stage_wns_ps=-1200.0, stage_tns_ps=-5000.0,
+        stage_elapsed_s=45.0, checkpoint_id="cp-test001-PL",
+        parent_trial_id=None,
+    )
+    check(obs.trial_id == "test001", "MinimalObservation create")
+    check(obs.stage_wns_ps == -1200.0, "MinimalObservation wns")
+    obs2 = MinimalObservation.from_dict(obs.to_dict())
+    check(obs2.stage == "PL", "MinimalObservation roundtrip")
+    check(obs2.stage_elapsed_s == 45.0, "MinimalObservation roundtrip elapsed")
+    check(MinimalObservation.from_dict(None) is None, "MinimalObservation from_dict(None) -> None")
+    check(MinimalObservation.from_dict({}) is None, "MinimalObservation from_dict({}) -> None")
+
+    # -- DoomedDecision --
+    dd = DoomedDecision(
+        risk_class="soft_bad", risk_score=0.4,
+        reason_codes=["timing_negative", "stage_slow"],
+        rule_version="1.0.0",
+        input_evidence={"obs": obs.to_dict()},
+    )
+    check(dd.risk_class == "soft_bad", "DoomedDecision risk_class")
+    check(len(dd.reason_codes) == 2, "DoomedDecision reason_codes")
+    dd2 = DoomedDecision.from_dict(dd.to_dict())
+    check(dd2.risk_score == 0.4, "DoomedDecision roundtrip")
+    check(dd2.input_evidence == dd.input_evidence, "DoomedDecision roundtrip evidence")
+    check(DoomedDecision.from_dict(None) is None, "DoomedDecision from_dict(None) -> None")
+    check(DoomedDecision.from_dict({}) is None, "DoomedDecision from_dict({}) -> None")
+
+    # -- GWTWDecision --
+    gd = GWTWDecision(
+        action="pause", decision_stage="PL", rank=3,
+        parent_trial_id=None, child_trial_id=None,
+        is_audit_pass=False, scheduler_version="1.0.0",
+    )
+    check(gd.action == "pause", "GWTWDecision action")
+    check(gd.decision_stage == "PL", "GWTWDecision decision_stage")
+    gd2 = GWTWDecision.from_dict(gd.to_dict())
+    check(gd2.rank == 3, "GWTWDecision roundtrip")
+    check(gd2.scheduler_version == "1.0.0", "GWTWDecision roundtrip version")
+    check(GWTWDecision.from_dict(None) is None, "GWTWDecision from_dict(None) -> None")
+    check(GWTWDecision.from_dict({}) is None, "GWTWDecision from_dict({}) -> None")
+
+    # -- TrialRecord paused lifecycle --
+    tr_paused = TrialRecord(
+        trial_id="test_paused",
+        experiment_id="smoke-gcd-v1",
+        status="paused",
+        params={"FP": {"CORE_UTILIZATION": 38}, "PL": {}, "CTS": {}, "RT": {}},
+        stage_results=[StageResult(stage="FP", status="ok", elapsed_s=12.0),
+                       StageResult(stage="PL", status="ok", elapsed_s=45.0)],
+        checkpoint=CheckpointRef(
+            checkpoint_id="cp-test_paused-PL", source_trial_id="test_paused",
+            stage="PL", param_hash="sha256:deadbeef", orfs_commit="unresolved",
+        ),
+        final_qor=None,  # paused trials have no final QoR
+    )
+    check(tr_paused.status == "paused", "TrialRecord paused status accepted")
+    check(tr_paused.checkpoint is not None, "TrialRecord paused preserves checkpoint")
+    check(tr_paused.final_qor is None, "TrialRecord paused no final_qor")
+    check(tr_paused.is_complete == False, "TrialRecord paused is_complete=False")
+    check(tr_paused.failed_stage is None, "TrialRecord paused no failed stage")
+    # Roundtrip paused trial
+    tr_paused2 = TrialRecord.from_dict(tr_paused.to_dict())
+    check(tr_paused2.status == "paused", "TrialRecord paused roundtrip status")
+    check(tr_paused2.checkpoint.checkpoint_id == "cp-test_paused-PL", "TrialRecord paused roundtrip checkpoint")
+
+    # -- TrialRecord with multi-stage decision trace roundtrip --
+    dd_pl = DoomedDecision(
+        risk_class="soft_bad", risk_score=0.4,
+        reason_codes=["timing_negative"],
+        rule_version="1.0.0",
+        input_evidence={"stage": "PL"},
+    )
+    dd_cts = DoomedDecision(
+        risk_class="survivor", risk_score=0.9,
+        reason_codes=["timing_ok"],
+        rule_version="1.0.0",
+        input_evidence={"stage": "CTS"},
+    )
+    gd_pl = GWTWDecision(
+        action="continue", decision_stage="PL", rank=2,
+        scheduler_version="1.0.0",
+    )
+    gd_cts = GWTWDecision(
+        action="finish", decision_stage="CTS", rank=1,
+        scheduler_version="1.0.0",
+    )
+    tr_dt = TrialRecord(
+        trial_id="test_decision",
+        experiment_id="smoke-gcd-v1",
+        status="ok",
+        params={"FP": {"CORE_UTILIZATION": 38}},
+        doomed_decisions=[dd_pl, dd_cts],
+        gwtw_decisions=[gd_pl, gd_cts],
+    )
+    check(len(tr_dt.doomed_decisions) == 2, "TrialRecord doomed_decisions count")
+    check(tr_dt.doomed_decisions[0].risk_class == "soft_bad", "TrialRecord doomed_decisions PL entry")
+    check(tr_dt.doomed_decisions[1].risk_class == "survivor", "TrialRecord doomed_decisions CTS entry")
+    check(len(tr_dt.gwtw_decisions) == 2, "TrialRecord gwtw_decisions count")
+    check(tr_dt.gwtw_decisions[0].action == "continue", "TrialRecord gwtw_decisions PL entry")
+    check(tr_dt.gwtw_decisions[1].action == "finish", "TrialRecord gwtw_decisions CTS entry")
+    # Roundtrip through dict
+    tr_dt2 = TrialRecord.from_dict(tr_dt.to_dict())
+    check(len(tr_dt2.doomed_decisions) == 2, "TrialRecord decision trace roundtrip count doomed")
+    check(tr_dt2.doomed_decisions[1].risk_class == "survivor", "TrialRecord decision trace roundtrip CTS class")
+    check(len(tr_dt2.gwtw_decisions) == 2, "TrialRecord decision trace roundtrip count gwtw")
+    check(tr_dt2.gwtw_decisions[1].action == "finish", "TrialRecord decision trace roundtrip CTS action")
+
+    # -- Old Trial JSON backward compat (no doomed/gwtw keys) --
+    old_dict = {
+        "trial_id": "old001",
+        "experiment_id": "old-test",
+        "status": "ok",
+        "params": {"FP": {}, "PL": {}, "CTS": {}, "RT": {}},
+        "final_qor": {"wns_ps": -100.0, "tns_ps": -200.0, "area_um2": 500.0, "power_w": 0.01},
+        "stage_results": [],
+    }
+    tr_old = TrialRecord.from_dict(old_dict)
+    check(len(tr_old.doomed_decisions) == 0, "Old Trial JSON doomed_decisions=[]")
+    check(len(tr_old.gwtw_decisions) == 0, "Old Trial JSON gwtw_decisions=[]")
+    check(tr_old.execution_resolution is None, "Old Trial JSON execution_resolution=None")
+    # Roundtrip old dict → Trial → dict → Trial preserves empties
+    tr_old2 = TrialRecord.from_dict(tr_old.to_dict())
+    check(len(tr_old2.doomed_decisions) == 0, "Old Trial JSON roundtrip doomed_decisions=[]")
+    check(len(tr_old2.gwtw_decisions) == 0, "Old Trial JSON roundtrip gwtw_decisions=[]")
+
+    # -- Legacy singular key backward compat --
+    legacy_dict = {
+        "trial_id": "legacy001",
+        "experiment_id": "legacy-test",
+        "status": "ok",
+        "params": {"FP": {}},
+        "doomed_decision": {"risk_class": "survivor", "reason_codes": []},
+        "gwtw_decision": {"action": "continue", "decision_stage": "PL"},
+        "stage_results": [],
+    }
+    tr_legacy = TrialRecord.from_dict(legacy_dict)
+    check(len(tr_legacy.doomed_decisions) == 1, "Legacy singular doomed_decision → list of 1")
+    check(tr_legacy.doomed_decisions[0].risk_class == "survivor", "Legacy doomed_decision class")
+    check(len(tr_legacy.gwtw_decisions) == 1, "Legacy singular gwtw_decision → list of 1")
+    check(tr_legacy.gwtw_decisions[0].action == "continue", "Legacy gwtw_decision action")
+
+    # -- Enum validation --
+    try:
+        DoomedDecision(risk_class="invalid_class")
+        check(False, "DoomedDecision invalid risk_class should raise ValueError")
+    except ValueError as e:
+        check("invalid_class" in str(e), f"DoomedDecision ValueError message: {e}")
+
+    try:
+        GWTWDecision(action="invalid_action", decision_stage="PL")
+        check(False, "GWTWDecision invalid action should raise ValueError")
+    except ValueError as e:
+        check("invalid_action" in str(e), f"GWTWDecision action ValueError: {e}")
+
+    try:
+        GWTWDecision(action="continue", decision_stage="RT")
+        check(False, "GWTWDecision invalid decision_stage should raise ValueError")
+    except ValueError as e:
+        check("RT" in str(e), f"GWTWDecision decision_stage ValueError: {e}")
+
+    # -- DecisionTraceRef --
+    ref = DecisionTraceRef(
+        decision_id="dtr-001",
+        trace_path="traces/decisions.jsonl",
+    )
+    check(ref.decision_id == "dtr-001", "DecisionTraceRef create")
+    check(ref.trace_path == "traces/decisions.jsonl", "DecisionTraceRef trace_path")
+    ref2 = DecisionTraceRef.from_dict(ref.to_dict())
+    check(ref2.decision_id == "dtr-001", "DecisionTraceRef roundtrip")
+    check(DecisionTraceRef.from_dict(None) is None, "DecisionTraceRef from_dict(None)")
+    check(DecisionTraceRef.from_dict({}) is None, "DecisionTraceRef from_dict({})")
+    # Reject absolute path
+    try:
+        DecisionTraceRef(decision_id="x", trace_path="/absolute/path/trace.jsonl")
+        check(False, "absolute trace_path should raise ValueError")
+    except ValueError as e:
+        check("absolute" in str(e).lower(), f"absolute path message: {e}")
+    # Reject ".." traversal
+    try:
+        DecisionTraceRef(decision_id="x", trace_path="../escape/trace.jsonl")
+        check(False, "'..' in trace_path should raise ValueError")
+    except ValueError as e:
+        check(".." in str(e), f"'..' path message: {e}")
+    # Reject empty
+    try:
+        DecisionTraceRef(decision_id="x", trace_path="")
+        check(False, "empty trace_path should raise ValueError")
+    except ValueError as e:
+        check("empty" in str(e).lower(), f"empty path message: {e}")
+
+    # -- TrialRecord decision_trace_refs roundtrip --
+    tr_refs = TrialRecord(
+        trial_id="test_refs",
+        experiment_id="smoke",
+        status="ok",
+        decision_trace_refs=[
+            DecisionTraceRef(decision_id="dtr-pl", trace_path="traces/decisions.jsonl"),
+            DecisionTraceRef(decision_id="dtr-cts", trace_path="traces/decisions.jsonl"),
+        ],
+    )
+    check(len(tr_refs.decision_trace_refs) == 2, "TrialRecord decision_trace_refs count")
+    tr_refs2 = TrialRecord.from_dict(tr_refs.to_dict())
+    check(len(tr_refs2.decision_trace_refs) == 2, "TrialRecord decision_trace_refs roundtrip count")
+    check(tr_refs2.decision_trace_refs[0].decision_id == "dtr-pl", "roundtrip ref[0] id")
+    check(tr_refs2.decision_trace_refs[1].decision_id == "dtr-cts", "roundtrip ref[1] id")
 
     # -- JSONL --
     import tempfile
