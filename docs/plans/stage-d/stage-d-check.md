@@ -139,10 +139,10 @@ runs/sky130hd_gcd/stage-d-smoke-gcd_20260731_041742/iter-*/trial.json
 ## 8. Git 收尾
 
 - 阶段分支：`agenticpd-stage-d`
-- 阶段 commit：待创建
-- main merge commit：待创建
+- 阶段 commit：`d1d10af`（`feat: complete stage D doomed and GWTW demo`）
+- main merge commit：`4c460c4`（`merge: stage D doomed and GWTW demo`）
 - push：未授权、未执行
 
 ## 9. 最终结论
 
-阶段 D 功能与真实 Demo 验收通过，可以进入 Git 收尾。完成 commit 和 merge 前不得开始阶段 E；push 仍需用户单独授权。
+阶段 D 功能与真实 Demo 验收通过，本地 commit 和 merge 已完成，可以进入阶段 E 的 Plan。push 仍需用户单独授权。
