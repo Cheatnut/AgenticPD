@@ -1,93 +1,167 @@
-# AgenticPD — LLM 多智能体驱动的物理设计 QoR 优化框架
+# AgenticPD
 
-复现 *AgenticPD: Stage-Aware Agentic Framework for Physical Design QoR Optimization*：
-1 个 Judge + 4 个 StageAgent（FP/PL/CTS/RT），迭代调整 ORFS 流程参数，
-优化 WNS/TNS/Area/Power。核心机制：优化树 + 分支复用（Bef 阶段零成本继承）
-→ 观测工具（E(n) + B(s)）→ 逐阶段流水线 → 自动树可视化。
+AgenticPD 是构建在 OpenROAD-flow-scripts（ORFS）之上的物理设计 QoR 优化实验框架。系统使用一个 `JudgeAgent` 和 FP、PL、CTS、RT 四个 `StageAgent` 生成受约束的参数建议，再由 ORFS 执行物理设计流程。最终评价以 post-route 报告中的 WNS、TNS、面积和功耗为准。
 
-## 目录结构
+项目提供两条独立运行路径：
 
-```
-agenticpd/
-├── main.py              # CLI 入口
-├── config.py            # 全局配置：9 个 ParamSpec、FrameworkConfig、路径常量
-├── optimizer.py         # 优化主循环（论文 §6 伪代码）
-├── agents.py            # JudgeAgent + 4×StageAgent + ObservationTool
-├── llm_interface.py     # LLM 客户端（DeepSeek/OpenAI，指数退避重试，MockLLMClient）
-├── utils.py             # QoR 数据类、qor_is_better() 比较器、日志配置
-├── optimization_tree.py # 有根优化树数据结构
-├── orfs/                # ORFS 适配层：命令构建、报告解析、阶段执行、执行后端
-├── schemas/             # 数据模型：TrialRecord、StageResult、CheckpointRef、FailureClass
-├── managers/            # TrialManager（生命周期）、CheckpointManager（创建/验证/兼容性）
-├── tools/               # CLI 工具：clean.py、visualize.py、trial_inspect.py
-├── configs/experiments/ # 实验 YAML 配置
-├── tests/               # 纯 Python 测试（无 EDA/LLM/网络依赖）
-├── scripts/             # 辅助脚本（build_fixtures.py）
-├── docs/                # 设计文档（中文）：八阶段计划、实验契约、使用指南、验收门模板
-└── runs/                # 运行产物目录（不进 git）
-```
+- `main.py`：原始多 Agent 迭代优化，使用优化树选择分支并逐阶段执行。
+- `multi_agent_gwtw.py`：Doomed/GWTW Demo，在原有 Judge + 四个 Stage Agent 机制中加入 PL/CTS 两级 Doomed 分类、GWTW 资源分配和 checkpoint fork。
 
-## 依赖
+该 Demo 的目标是演示完整、可观察、可审计的闭环，不代表一定获得更优 QoR。
 
-- Python >= 3.10
-- `openai`（LLM API 调用）
-- ORFS 已可正常运行（`cd flow && make DESIGN_CONFIG=...` 能跑通）
+## Execution workflow
+
+![AgenticPD execution workflow](attachments/workflow.svg)
+
+原始入口每轮生成一个分支候选；Doomed/GWTW Demo 先生成 population，在 PL 和 CTS 建立决策屏障。Doomed 识别应停止或审计的候选，GWTW 决定继续运行和补位数量，checkpoint resolver 决定 child 能否复用父 Trial 产物以及实际执行起点。
+
+## Architecture
+
+![AgenticPD layered architecture](attachments/architecture.svg)
+
+各层职责保持分离：Agent 只提出策略和参数；orchestrator 管理 population、预算与生命周期；manager 和 schema 保存证据；`ORFSRunner` 负责真实执行；QoR parser 读取最终报告。
+
+## 环境准备
+
+要求：
+
+- Python 3.10 或更新版本
+- 可正常运行的 ORFS 和目标 PDK
+- 真实 Agent 模式所需的 OpenAI-compatible API key
+
+从 `flow/agenticpd` 执行：
 
 ```bash
-pip3 install -r flow/agenticpd/requirements.txt
+pip3 install -r requirements.txt
+cp .env.example .env
 ```
 
-API key 配置：
+在 `.env` 中设置 `DEEPSEEK_API_KEY`。不要将 `.env`、token 或密钥加入 Git。
+
+正式运行前，先确认 ORFS 基线可用：
 
 ```bash
-cp flow/agenticpd/.env.example flow/agenticpd/.env  # 编辑填入真实 key
-# 或 export DEEPSEEK_API_KEY=sk-...
+cd ..
+make DESIGN_CONFIG=./designs/sky130hd/gcd/config.mk
+cd agenticpd
 ```
 
-## 使用
+## 原始多 Agent 优化
 
-所有命令在 `flow/` 目录下执行：
+纯 Mock 调试不会调用 LLM 或 ORFS：
 
 ```bash
-cd flow
-
-# Smoke test：只跑基线，不调 LLM
-python3 agenticpd/main.py --baseline-only --design gcd
-
-# 完整优化：基线 + N 次迭代
-python3 agenticpd/main.py --design gcd --iterations 3
-
-# 断点续跑
-python3 agenticpd/main.py --resume latest
-
-# 全 mock 调试（零 token / 零 EDA）
-python3 agenticpd/main.py --mock-llm --mock-orfs --iterations 5
-
-# 查看 trial
-python3 agenticpd/tools/trial_inspect.py --list sky130hd gcd
-python3 agenticpd/tools/trial_inspect.py <trial_id> --stages
-
-# 清理产物（base 基线永不删除）
-python3 agenticpd/tools/clean.py sky130hd gcd --dry-run
-python3 agenticpd/tools/clean.py sky130hd gcd --yes
-
-# 优化树可视化
-python3 agenticpd/tools/visualize.py agenticpd/runs/<session>
+python3 main.py --mock-llm --mock-orfs --iterations 5
 ```
 
-常用选项：`--platform`、`--timeout`（秒）、`--wns-tol`/`--tns-tol`（ps）、`--log-level DEBUG`。
+只运行真实 ORFS 基线，不调用 LLM：
+
+```bash
+python3 main.py --baseline-only --platform sky130hd --design gcd
+```
+
+运行真实多 Agent 优化：
+
+```bash
+python3 main.py --platform sky130hd --design gcd --iterations 3
+```
+
+恢复最近一次同设计 session：
+
+```bash
+python3 main.py --platform sky130hd --design gcd --resume latest
+```
+
+`main.py` 运行完成后会尝试生成传统优化树图片。原始结构化证据仍以 `tree.json`、Trial 文件和 ORFS 报告为准。
+
+## Doomed + GWTW Demo
+
+实验配置位于：
+
+```text
+configs/experiments/multi-agent-gwtw-demo.yml
+```
+
+先用相同控制流完成离线检查：
+
+```bash
+python3 multi_agent_gwtw.py \
+  --config configs/experiments/multi-agent-gwtw-demo.yml \
+  --mock-llm \
+  --mock-orfs
+```
+
+运行真实 LLM + 真实 ORFS：
+
+```bash
+python3 multi_agent_gwtw.py \
+  --config configs/experiments/multi-agent-gwtw-demo.yml
+```
+
+终端完成摘要会给出 `total_trials`、`budget_remaining`、`errors` 和
+`finish_trials`。该摘要只能证明控制流结束；真实结果还应检查 finish
+Trial 的 `final_qor` 和对应 ORFS post-route 报告。
+
+## Session 证据与可视化
+
+每次运行写入独立目录：
+
+```text
+runs/<platform>_<design>/<session>/
+├── config_snapshot.json
+├── trials.jsonl
+├── tree.json
+├── traces/decisions.jsonl
+├── iter-<N>-<trial_id>/trial.json
+└── visualization/
+```
+
+为任意已有 session 生成离线 HTML：
+
+```bash
+python3 tools/session_visualize.py \
+  runs/sky130hd_gcd/<session>
+```
+
+结果保存在对应 session 内：
+
+```text
+runs/sky130hd_gcd/<session>/visualization/index.html
+runs/sky130hd_gcd/<session>/visualization/session_data.json
+```
+
+直接用浏览器打开 `index.html`，不需要 HTTP server、网络或 CDN。页面展示配置、决策时间线、PL/CTS cohort、Trial、checkpoint fork、优化树和 finish QoR。HTML 是静态视图；需要审计时仍应回到 JSONL、Trial、checkpoint manifest 和 ORFS 原始报告。
+
+## 查看、复现与清理
+
+```bash
+# 列出某个设计的 Trial
+python3 tools/trial_inspect.py --list sky130hd gcd
+
+# 查看一个 Trial 的阶段结果
+python3 tools/trial_inspect.py <trial_id> --stages
+
+# 查看清理范围，不执行删除
+python3 tools/clean.py sky130hd gcd --dry-run
+```
+
+复现和清理可能启动真实 EDA 或删除运行产物，执行前应先阅读：
+
+- `docs/usage/cli-verification.md`
+- `docs/introduction/实验契约.md`
 
 ## 验证
 
+仓库内可复现的纯 Python 检查：
+
 ```bash
-cd flow/agenticpd
-make test    # 纯 Python，无 EDA/LLM/网络依赖
+make check
 ```
 
-## 详情见 docs/
+若本地保留了不进 Git 的 `tests/` 目录，还应运行：
 
-| 文档 | 内容 |
-|------|------|
-| `docs/experiment-contract.md` | QoR 数据来源、评价函数、Trial 格式、预算定义、公平性约束 |
-| `docs/usage/` | CLI 工具详细用法 |
-| `docs/introduction/` | 系统介绍、架构说明 |
+```bash
+make test
+```
+
+Mock 结果用于检查控制流，不能替代真实 LLM 决策或真实 ORFS QoR 证据。

@@ -26,7 +26,7 @@ AgenticPD 是可复现、可审计、可比较的 Flow Optimization 实验平台
 ## 语言、边界与实验
 
 - 所有 `.md` 使用中文；其他文件内容、代码注释、docstring、配置说明、CLI 输出和测试描述使用英文。
-- `configs/experiments/` 存实验声明，`tests/` 是无 EDA/LLM/网络的纯 Python 测试，fixtures 只读；`schemas/`、`managers/`、`orfs/` 是可替换边界。
+- `configs/experiments/` 存实验声明；`tests/` 是本地维护且不进 Git 的纯 Python 回归目录，存在时 fixtures 只读；`schemas/`、`managers/`、`orfs/` 是可替换边界。
 - 不得把阶段 B 后职责堆入 `main.py`；路径由项目根、配置或参数推导，禁止硬编码用户目录。
 - `runs/` 是临时产物，不能是唯一实验记录；当前 Trial ID 是随机 8 位十六进制标识，`agenticpd_iter<N>` 仅作 legacy variant 证据。
 - 真实实验必须有 YAML，记录参数空间、evaluator、预算、seed 和 design 角色；QoR 唯一权威来源是 ORFS post-route 报告。
@@ -35,8 +35,9 @@ AgenticPD 是可复现、可审计、可比较的 Flow Optimization 实验平台
 ## 安全与验收
 
 - 不读取、打印、提交或复制 `.env`、token、密钥；日志不得含密钥、完整请求头或绝对用户路径。
-- 行为 bug 先有失败回归测试；清理 runs/ORFS 产物必须显式指定 trial，禁止宽泛递归删除。
-- 每次待验收改动至少运行 `make test`；真实 smoke run 只能补充，不能替代测试。
+- 行为 bug 应先在本地 `tests/` 增加失败回归测试；该目录不进 Git，交付报告必须写明测试名称、关键断言和结果。
+- 每次待验收改动至少运行 `make check`；本地 `tests/` 存在时还应运行 `make test`。真实 smoke run 只能补充，不能替代纯 Python 检查。
+- 清理 runs/ORFS 产物必须显式指定 trial，禁止宽泛递归删除。
 - 阶段结束前必须告知用户是否需要真实实验；需要时给出原因、配置、命令、证据和通过标准，结果到位前不得完成验收。
 
 ## 审查输出

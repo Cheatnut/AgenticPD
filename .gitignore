@@ -13,3 +13,6 @@ results/
 # Python cache
 __pycache__/
 *.pyc
+
+# Local-only regression suite
+/tests/
