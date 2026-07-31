@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="920" viewBox="0 0 1500 920" role="img" aria-labelledby="title desc">
+  <title id="title">AgenticPD Demo Architecture</title>
+  <desc id="desc">Compact layered architecture of the multi-agent Doomed and GWTW demo, from experiment input through agents, orchestration, ORFS execution, and auditable artifacts.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fbfcfd"/>
+      <stop offset="1" stop-color="#edf3f7"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-15%" width="120%" height="140%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#16354c" flood-opacity=".12"/>
+    </filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#47657a"/>
+    </marker>
+    <marker id="feedbackArrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#168477"/>
+    </marker>
+    <style>
+      text{font-family:Inter,Segoe UI,Arial,sans-serif;fill:#172b3a}
+      .title{font-size:34px;font-weight:700}
+      .subtitle{font-size:16px;fill:#61768a}
+      .layer{fill:#fff;stroke:#bdcbd6;stroke-width:1.3;rx:15}
+      .layerTitle{font-size:13px;font-weight:750;letter-spacing:1.4px;fill:#64798c}
+      .card{fill:#fff;stroke:#8fa5b6;stroke-width:1.3;rx:10;filter:url(#shadow)}
+      .blue{fill:#edf5fb;stroke:#5a87ad}
+      .purple{fill:#f4f0fb;stroke:#896eaa}
+      .red{fill:#fff1ef;stroke:#c56b62}
+      .teal{fill:#eaf7f4;stroke:#2b9387}
+      .amber{fill:#fff6e8;stroke:#ba873d}
+      .slate{fill:#f2f5f7;stroke:#7b91a3}
+      .name{font-size:17px;font-weight:700;text-anchor:middle}
+      .detail{font-size:12.5px;fill:#52687a;text-anchor:middle}
+      .flow{fill:none;stroke:#47657a;stroke-width:2;marker-end:url(#arrow)}
+      .feedback{fill:none;stroke:#168477;stroke-width:1.8;stroke-dasharray:7 5;marker-end:url(#feedbackArrow)}
+      .label{font-size:12px;fill:#60758a;text-anchor:middle}
+      .stage{font-size:14px;font-weight:700;text-anchor:middle;fill:#fff}
+    </style>
+  </defs>
+
+  <rect width="1500" height="920" fill="url(#background)"/>
+  <text x="55" y="55" class="title">AgenticPD Demo Architecture</text>
+  <text x="55" y="83" class="subtitle">A compact, stage-aware control loop: agents propose, Doomed/GWTW select, ORFS executes, and every result remains traceable.</text>
+
+  <!-- Layer 1: experiment input -->
+  <rect x="45" y="112" width="1410" height="110" class="layer"/>
+  <text x="70" y="140" class="layerTitle">01 · EXPERIMENT INPUT</text>
+  <rect x="205" y="153" width="330" height="50" class="card blue"/>
+  <text x="370" y="176" class="name">multi_agent_gwtw.py</text>
+  <text x="370" y="194" class="detail">thin CLI · runner selection · session setup</text>
+  <rect x="605" y="153" width="330" height="50" class="card blue"/>
+  <text x="770" y="176" class="name">Experiment YAML</text>
+  <text x="770" y="194" class="detail">design · population · seed · quotas · budget</text>
+  <rect x="1005" y="153" width="290" height="50" class="card blue"/>
+  <text x="1150" y="176" class="name">FrameworkConfig</text>
+  <text x="1150" y="194" class="detail">PARAM_SPACE · derived paths · ORFS settings</text>
+
+  <!-- Layer 2: agents -->
+  <rect x="45" y="246" width="1410" height="120" class="layer"/>
+  <text x="70" y="274" class="layerTitle">02 · MULTI-AGENT PROPOSAL</text>
+  <rect x="235" y="292" width="330" height="52" class="card purple"/>
+  <text x="400" y="315" class="name">JudgeAgent.act()</text>
+  <text x="400" y="334" class="detail">branch choice · stage hints · parent proposal</text>
+  <rect x="645" y="282" width="620" height="72" class="card purple"/>
+  <text x="955" y="307" class="name">FPAgent · PLAgent · CTSAgent · RTAgent</text>
+  <text x="955" y="329" class="detail">stage-scoped parameter proposals validated against PARAM_SPACE</text>
+  <text x="955" y="347" class="detail">build_stage_agents() · StageAgent.act()</text>
+
+  <!-- Layer 3: control -->
+  <rect x="45" y="390" width="1410" height="245" class="layer"/>
+  <text x="70" y="418" class="layerTitle">03 · POPULATION CONTROL &amp; DECISION LOOP</text>
+  <rect x="90" y="457" width="260" height="76" class="card amber"/>
+  <text x="220" y="485" class="name">Bootstrap Population</text>
+  <text x="220" y="507" class="detail">MultiAgentGWTWOrchestrator</text>
+  <text x="220" y="525" class="detail">FP → PL execution barrier</text>
+
+  <rect x="405" y="443" width="300" height="104" class="card red"/>
+  <text x="555" y="471" class="name">PL Decision</text>
+  <text x="555" y="493" class="detail">build_minimal_observation()</text>
+  <text x="555" y="513" class="detail">predict() → schedule()</text>
+  <text x="555" y="533" class="detail">survive · pause · audit</text>
+
+  <rect x="760" y="457" width="260" height="76" class="card amber"/>
+  <text x="890" y="485" class="name">Checkpoint Children</text>
+  <text x="890" y="507" class="detail">plan_cohort() · execute_cohort()</text>
+  <text x="890" y="525" class="detail">resolve_checkpoint() → CTS</text>
+
+  <rect x="1075" y="443" width="300" height="104" class="card red"/>
+  <text x="1225" y="471" class="name">CTS Decision</text>
+  <text x="1225" y="493" class="detail">observation → Doomed → GWTW</text>
+  <text x="1225" y="513" class="detail">survivor whitelist · audit quota</text>
+  <text x="1225" y="533" class="detail">checkpoint child → RT</text>
+
+  <path d="M350 495 H405" class="flow"/>
+  <path d="M705 495 H760" class="flow"/>
+  <path d="M1020 495 H1075" class="flow"/>
+
+  <rect x="390" y="574" width="720" height="38" rx="19" fill="#e9f5f2" stroke="#43a095"/>
+  <text x="750" y="598" class="name">continue · pause · audit_continue · checkpoint_fork · full_restart</text>
+  <path d="M555 547 V574" class="flow"/>
+  <path d="M1225 547 C1225 570 1110 565 1110 593" class="flow"/>
+
+  <!-- Layer 4: execution -->
+  <rect x="45" y="660" width="1410" height="115" class="layer"/>
+  <text x="70" y="688" class="layerTitle">04 · PHYSICAL-DESIGN EXECUTION</text>
+  <rect x="135" y="708" width="270" height="48" class="card teal"/>
+  <text x="270" y="731" class="name">ORFSRunner</text>
+  <text x="270" y="749" class="detail">copy_parent_results() · clean_downstream()</text>
+
+  <rect x="455" y="708" width="190" height="48" rx="9" fill="#5a87ad"/>
+  <text x="550" y="738" class="stage">FP / PL</text>
+  <rect x="685" y="708" width="190" height="48" rx="9" fill="#55a868"/>
+  <text x="780" y="738" class="stage">CTS</text>
+  <rect x="915" y="708" width="190" height="48" rx="9" fill="#8172b2"/>
+  <text x="1010" y="738" class="stage">RT</text>
+  <rect x="1145" y="708" width="220" height="48" class="card teal"/>
+  <text x="1255" y="731" class="name">parse_qor()</text>
+  <text x="1255" y="749" class="detail">post-route WNS · TNS · area · power</text>
+  <path d="M405 732 H455" class="flow"/>
+  <path d="M645 732 H685" class="flow"/>
+  <path d="M875 732 H915" class="flow"/>
+  <path d="M1105 732 H1145" class="flow"/>
+
+  <!-- Layer 5: evidence -->
+  <rect x="45" y="800" width="1410" height="90" class="layer"/>
+  <text x="70" y="828" class="layerTitle">05 · AUDITABLE SESSION ARTIFACTS</text>
+  <rect x="130" y="842" width="250" height="32" class="card slate"/>
+  <text x="255" y="864" class="detail">TrialRecord · StageResult · final_qor</text>
+  <rect x="420" y="842" width="250" height="32" class="card slate"/>
+  <text x="545" y="864" class="detail">CheckpointRef · ExecutionResolution</text>
+  <rect x="710" y="842" width="220" height="32" class="card slate"/>
+  <text x="820" y="864" class="detail">traces/decisions.jsonl</text>
+  <rect x="970" y="842" width="190" height="32" class="card slate"/>
+  <text x="1065" y="864" class="detail">tree.json · trials.jsonl</text>
+  <rect x="1200" y="842" width="190" height="32" class="card slate"/>
+  <text x="1295" y="864" class="detail">visualization/index.html</text>
+
+  <!-- Main vertical flow and feedback -->
+  <path d="M750 222 V246" class="flow"/>
+  <path d="M750 366 V390" class="flow"/>
+  <path d="M750 635 V660" class="flow"/>
+  <path d="M750 775 V800" class="flow"/>
+  <path d="M1410 845 H1430 V318 H1265" class="feedback"/>
+  <text x="1445" y="585" transform="rotate(-90 1445 585)" class="label">persisted observations and QoR inform later decisions</text>
+</svg>

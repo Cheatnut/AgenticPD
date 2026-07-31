@@ -1,2 +1,4 @@
+# AgenticPD Python runtime dependencies.
 openai>=1.0
 matplotlib>=3.5
+PyYAML>=6.0

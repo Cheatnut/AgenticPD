@@ -1,0 +1,42 @@
+# Stage E: Multi-Agent + Doomed/GWTW integration demo.
+# YAML is the sole authority — all runtime config derives from this file.
+experiment_id: multi-agent-gwtw-demo
+
+design:
+  platform: sky130hd
+  design: gcd
+  role: integration-demo
+
+evaluator:
+  type: ORFS post-route QoR
+  qor_tolerances:
+    wns_ps: 0.0
+    tns_ps: 0.0
+
+population:
+  size: 4
+
+# Decision stages where Doomed/GWTW are applied.
+decision_stages: [PL, CTS]
+
+# PL/CTS decision quotas.
+decisions:
+  PL:
+    survivor_count: 2
+    audit_quota: 0
+    max_children_per_parent: 2
+  CTS:
+    survivor_count: 1
+    audit_quota: 1
+    max_children_per_parent: 2
+
+seed: 42
+
+budget:
+  max_trials: 20
+  wall_clock_s: 3600
+
+versions:
+  doomed_rule: "1.0.0"
+  scheduler: "1.0.0"
+  planner: "1.0.0"
