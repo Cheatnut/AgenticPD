@@ -6,7 +6,7 @@ Trial 是“一次候选执行”的可审计记录；checkpoint 是“已完成
 
 ## 数据模型
 
-数据模型位于 `schemas/trial.py`，持久化由 `managers/` 负责。
+数据模型位于 `core/models.py` 与 `core/decisions.py`，持久化由 `storage/` 负责。
 
 | 对象 | 它记录什么 |
 |---|---|

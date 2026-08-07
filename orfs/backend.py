@@ -111,7 +111,7 @@ class LocalBackend(ExecutionBackend):
 class SlurmBackend(ExecutionBackend):
     """Submit jobs via Slurm ``sbatch``, poll via ``squeue``, cancel via ``scancel``.
 
-    Stage C provides the interface and method signatures.  The submit/poll/cancel
+    This backend provides the interface and method signatures. The submit/poll/cancel
     implementations below are stubs that raise NotImplementedError — they will be
     completed once deployed on a Slurm cluster.
     """
@@ -128,7 +128,7 @@ class SlurmBackend(ExecutionBackend):
     ) -> ExecutionResult:
         """Submit to Slurm and block until completion or timeout.
 
-        Stage C stub: delegates to LocalBackend until Slurm is available.
+        Stub: delegates to LocalBackend until Slurm is available.
         """
         # TODO: replace with sbatch submit + squeue poll loop
         raise NotImplementedError(

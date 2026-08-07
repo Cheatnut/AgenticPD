@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""multi_agent_gwtw.py — Stage E: Multi-Agent + Doomed/GWTW entry point.
+"""multi_agent_gwtw.py — Multi-Agent + Doomed/GWTW demo entry point.
 
 Thin CLI that reads a YAML experiment config, selects real or mock LLM/ORFS
 runner, creates managers, and launches MultiAgentGWTWOrchestrator.
@@ -28,23 +28,21 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
-
 import config as cfg_mod
 from config import AGENTICPD_DIR, ENV_FILENAME, FrameworkConfig, get_design_runs_dir
-from multi_agent_gwtw_orchestrator import (
+from gwtw.orchestrator import (
     MultiAgentGWTWConfig,
     MultiAgentGWTWOrchestrator,
 )
-from managers import TrialManager, CheckpointManager
-from utils import load_dotenv_file, setup_logging
+from storage import TrialManager, CheckpointManager
+from core.utils import load_dotenv_file, setup_logging
 
 log = logging.getLogger("multi_agent_gwtw")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Stage E: Multi-Agent + Doomed/GWTW optimization demo",
+        description="Multi-Agent + Doomed/GWTW optimization demo",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--config", type=str, required=True,
                         help="Path to experiment YAML config")
@@ -89,12 +87,12 @@ def main() -> None:
     setup_logging(log_file, level=getattr(logging, args.log_level))
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("openai").setLevel(logging.WARNING)
-    log.info("[STAGE-E] start: experiment=%s platform=%s design=%s "
+    log.info("[GWTW-DEMO] start: experiment=%s platform=%s design=%s "
              "run_dir=%s", cfg.experiment_id, fw.platform, fw.design, run_dir)
 
     # 6) Write config snapshot.
     snapshot = {
-        "mode": "stage-e",
+        "mode": "demo-gwtw",
         "experiment_id": cfg.experiment_id,
         "platform": fw.platform,
         "design": fw.design,
@@ -122,10 +120,10 @@ def main() -> None:
     # 7) Create runner.
     if args.mock_orfs:
         # Stage-E-aware mock runner: MockORFSRunner._mock_stage_qor only
-        # produces _ws_ps keys, but the Stage D observation builder requires
+        # produces _ws_ps keys, but the Doomed/GWTW observation builder requires
         # BOTH _ws_ps and _tns_ps keys with the same tag.  Fix by using the
         # StageERecordingFakeRunner which produces complete two-key QoR.
-        from multi_agent_gwtw_orchestrator import StageERecordingFakeRunner
+        from gwtw.orchestrator import StageERecordingFakeRunner
         runner = StageERecordingFakeRunner(fw.flow_dir)
     else:
         from orfs.interface import ORFSRunner
@@ -135,20 +133,21 @@ def main() -> None:
     judge_agent = None
     stage_agents = {}
     if args.mock_llm:
-        from llm_interface import MockLLMClient
+        from agents.llm import MockLLMClient
         llm = MockLLMClient(fw)
     else:
-        from llm_interface import LLMClient, LLMError
+        from agents.llm import LLMClient, LLMError
         try:
             llm = LLMClient(fw)
         except LLMError as e:
             sys.exit(f"Error: {e}")
 
     # Create agents regardless of mock/real — they share the same interface.
-    from agents import JudgeAgent, build_stage_agents
+    from agents.judge import JudgeAgent
+    from agents.stage import build_stage_agents
     judge_agent = JudgeAgent(llm, fw)
     stage_agents = build_stage_agents(llm, fw)
-    log.info("[STAGE-E] Agents ready: Judge + %d StageAgents",
+    log.info("[GWTW-DEMO] Agents ready: Judge + %d StageAgents",
              len(stage_agents))
 
     # 9) Create managers and orchestrator, then run.
@@ -159,13 +158,13 @@ def main() -> None:
         judge_agent=judge_agent, stage_agents=stage_agents)
     result = orch.run()
 
-    log.info("[STAGE-E] complete: total_trials=%d budget_remaining=%d "
+    log.info("[GWTW-DEMO] complete: total_trials=%d budget_remaining=%d "
              "errors=%s resumed=%s finish_trials=%d",
              result.total_trials, result.budget_remaining,
              result.errors, result.resumed, len(result.finish_trial_ids))
     if result.errors:
         for err in result.errors:
-            log.error("[STAGE-E] error: %s", err)
+            log.error("[GWTW-DEMO] error: %s", err)
         sys.exit(1)
 
 

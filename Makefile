@@ -7,9 +7,11 @@ test:
 
 # Repository-tracked pure Python verification; no LLM, ORFS, or network access.
 check:
-	python3 schemas/trial.py
-	python3 orchestrator.py
-	python3 multi_agent_gwtw_orchestrator.py
+	python3 -m compileall -q core storage agents search gwtw orfs tools
 	python3 main.py --help >/dev/null
 	python3 multi_agent_gwtw.py --help >/dev/null
-	python3 tools/session_visualize.py --help >/dev/null
+	python3 tools/trial_inspect.py --help >/dev/null
+	python3 tools/trial_reproduce.py --help >/dev/null
+	python3 tools/clean.py --help >/dev/null
+	python3 -m tools.session_visualize --help >/dev/null
+	python3 tools/checkpoint_fork_verify.py --help >/dev/null

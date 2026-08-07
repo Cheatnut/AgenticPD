@@ -20,8 +20,8 @@ from typing import List, Optional, Tuple
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import RUNS_DIR, get_design_runs_dir
-from schemas.trial import TrialRecord
-from managers import TrialManager
+from core.models import TrialRecord
+from storage import TrialManager
 
 
 # ---------------------------------------------------------------------------

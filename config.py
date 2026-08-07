@@ -8,7 +8,7 @@ or value range elsewhere is forbidden.
 
 Three sections:
 1. ParamSpec / PARAM_SPACE: Data-driven definition of tunable parameter space.
-   Adding/removing params only requires changes here; agents.py / orfs_interface.py
+   Adding/removing params only requires changes here; agents/ and orfs/ consume it
    will auto-adapt.
 2. BASELINE_PARAMS: Parameters used for the baseline (iteration #0) run,
    consistent with ORFS base flow.

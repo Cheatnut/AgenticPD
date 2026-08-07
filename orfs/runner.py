@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """orfs.runner — Stage C1: subprocess execution for ORFS stages.
 
-Extracted from orfs_interface.py.  Handles make process invocation,
+Handles make process invocation,
 timeout / process-group cleanup, and log capture.
 """
 
@@ -18,7 +18,7 @@ from orfs.parser import (
     parse_qor, parse_stage_qor, detect_failed_stage,
     CLEAN_TARGETS, STAGE_MAKE_TARGET,
 )
-from utils import QoR
+from core.utils import QoR
 
 log = logging.getLogger(__name__)
 
@@ -172,7 +172,7 @@ def execute_stage(
     Returns a StageResult with elapsed_s, exit_code, and stage_qor.
     Failed stages correctly record their elapsed time (never 0.0).
     """
-    from schemas.trial import StageResult, FailureClass
+    from core.models import StageResult, FailureClass
 
     from datetime import datetime, timezone
 

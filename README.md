@@ -19,7 +19,9 @@ AgenticPD 是构建在 OpenROAD-flow-scripts（ORFS）之上的物理设计 QoR 
 
 ![AgenticPD layered architecture](attachments/architecture.svg)
 
-各层职责保持分离：Agent 只提出策略和参数；orchestrator 管理 population、预算与生命周期；manager 和 schema 保存证据；`ORFSRunner` 负责真实执行；QoR parser 读取最终报告。
+各层职责保持分离：Agent 只提出策略和参数；orchestrator 管理 population、预算与生命周期；`storage/` 与 `core/` 保存证据；`ORFSRunner` 负责真实执行；QoR parser 读取最终报告。
+
+代码按低耦合高内聚分层：`core/`（数据模型与通用工具）、`storage/`（持久化）、`agents/`（Agent 与 LLM 客户端）、`search/`（原始优化路径）、`gwtw/`（Doomed/GWTW 编排）、`orfs/`（ORFS 适配）、`tools/`（CLI 与可视化）。详见 `docs/AgenticPD项目扫描报告.md`。
 
 ## 环境准备
 
@@ -119,8 +121,7 @@ runs/<platform>_<design>/<session>/
 为任意已有 session 生成离线 HTML：
 
 ```bash
-python3 tools/session_visualize.py \
-  runs/sky130hd_gcd/<session>
+python3 -m tools.session_visualize runs/sky130hd_gcd/<session>
 ```
 
 结果保存在对应 session 内：

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """orfs.command — Stage C1: ORFS make command construction.
 
-Extracted from orfs_interface.py.  Builds the make command line and
+Builds the make command line and
 supporting files (fastroute.tcl) for a given set of stage parameters.
 """
 

@@ -1,6 +1,6 @@
 # AgenticPD Executor 规范
 
-AgenticPD 是可复现、可审计、可比较的 Flow Optimization 实验平台；A–H 总纲见 `docs/AgenticPD八阶段迭代计划.md`。
+AgenticPD 是构建在 OpenROAD-flow-scripts（ORFS）之上的物理设计 QoR 优化实验框架；基线结构与质量分级见 `docs/AgenticPD项目扫描报告.md`，协作流程见 `docs/WORKFLOW.md`。
 
 本规范适用于本目录及子目录。Claude 是执行者：只按 Codex 已确认的 Plan 实现，不擅自改变阶段边界、架构或实验口径。完整协作流程以 `docs/WORKFLOW.md` 为唯一真相源；本文件只补充 Claude 的角色边界和工程约定。
 
@@ -38,9 +38,8 @@ python3 agenticpd/tools/clean.py sky130hd gcd --yes
 # 优化树可视化
 python3 agenticpd/tools/visualize.py agenticpd/runs/<session>
 
-# schemas / managers 模块自带自测
-python3 agenticpd/schemas/trial.py
-python3 agenticpd/managers/trial_manager.py
+# 数据模型 / 持久化自检（迁移后在 tests/ 下运行）
+python3 -m unittest tests.test_core_models tests.test_storage_trace
 ```
 
 ## 架构总览
@@ -70,15 +69,14 @@ baseline (iter #0) → [Observation → Judge → Branch → StageAgent×N → O
 |------|------|------|
 | `main.py` | CLI 入口，参数解析，run_dir 创建，模式分发 | config, optimizer, orfs |
 | `config.py` | **唯一真相源**：9 个 ParamSpec、PARAM_SPACE、BASELINE_PARAMS、FrameworkConfig、路径常量 | 无 |
-| `optimizer.py` | 优化主循环：baseline + 迭代（observation→judge→branch→stage pipeline），历史/tree 管理 | config, agents, optimization_tree, orfs, managers, utils |
-| `agents.py` | JudgeAgent + 4×StageAgent（FP/PL/CTS/RT）+ ObservationTool | config, llm_interface |
-| `optimization_tree.py` | 有根优化树数据结构：增删查、序列化、原子持久化 | config |
-| `llm_interface.py` | LLMClient（DeepSeek API，指数退避重试，JSON 解析失败自动反馈）+ MockLLMClient | config, utils |
-| `utils.py` | QoR 数据类 + 解析（JSON metrics 优先，rpt/log regex 兜底）、`qor_is_better()` 比较器、日志、JSON 提取、.env 加载 | config |
-| `orfs/` | ORFS 适配层：`command.py` 构建 make 命令、`runner.py` 子进程执行、`parser.py` 报告解析、`interface.py` 高层编排 + MockORFSRunner | config, utils, schemas |
-| `schemas/` | 数据模型：TrialRecord、StageResult、CheckpointRef、FailureClass（dataclass，无 Pydantic 依赖） | 无 |
-| `managers/` | TrialManager（trial 生命周期 + JSONL 索引）、CheckpointManager（checkpoint 创建/验证） | schemas |
-| `tools/` | CLI 工具：clean、visualize、trial_inspect、trial_reproduce、checkpoint_fork_verify | config, schemas, managers |
+| `config.py` | **唯一真相源**：9 个 ParamSpec、PARAM_SPACE、BASELINE_PARAMS、FrameworkConfig、路径常量 | 无 |
+| `core/` | 数据模型（models/decisions）、QoR 比较（qor）、通用工具（utils） | config |
+| `storage/` | TrialManager、CheckpointManager、DecisionTraceWriter/TraceIO | core |
+| `agents/` | JudgeAgent + 4×StageAgent + LLMClient/MockLLMClient + 观测摘要 | config, core |
+| `search/` | Optimizer 主循环 + stage_pipeline + OptimizationTree | agents, core, storage, gwtw.resolver, orfs |
+| `gwtw/` | Doomed/GWTW 统一编排（orchestrator/population/cohort_*/execution/doom/scheduler/mutation/resolver） | agents, core, storage, orfs |
+| `orfs/` | ORFS 适配层：command/runner/parser/interface/backend | config, core, storage |
+| `tools/` | CLI 工具：clean、visualize、trial_inspect、trial_reproduce、checkpoint_fork_*、session_visualize/ | config, core, storage, orfs |
 
 ### 数据流
 
@@ -105,25 +103,25 @@ main.py → FrameworkConfig → Optimizer
 
 ## 执行与阶段
 
-- 开始前阅读 `docs/WORKFLOW.md`、`docs/plans/stage-<letter>/stage-<letter>-plan.md`，并在 `HANDOVER.md` 存在时读取它；歧义、冲突、范围变化或计划缺失先反馈 Codex。
+- 开始前阅读 `docs/WORKFLOW.md`、`docs/HANDOVER.md` 与 `docs/AgenticPD项目扫描报告.md`；歧义、冲突、范围变化或方案缺失先反馈 Codex。
 - 不得创建、修改或补写 Plan、验收报告或后续阶段内容；不得提前实现后续阶段。
 - 以一次性交付包为实现单位，集中完成其中全部 P0/P1 和必要回归；不得只修点名行而忽略相邻接口，也不得顺带重构或修改无关文件。
 - 完成后报告改动、测试、遗留风险和计划偏离，等待 Codex 审查；不自行 commit、merge 或 push。
 - 交付和返工格式严格遵守 `docs/WORKFLOW.md`，测试名称必须与关键断言实际证明的行为一致。
-- 每阶段使用独立 `agenticpd-stage-<letter>` 分支，不得混入其他阶段；删除、重写历史、`.env`/密钥/CI/CD、数据库迁移、全局依赖或系统配置先获用户授权。
+- 功能交付在 `main` 上直接开发或在用户指定的功能分支上进行，不得混入无关改动；删除、重写历史、`.env`/密钥/CI/CD、数据库迁移、全局依赖或系统配置先获用户授权。
 
 ## 文档与语言
 
 - 除用户明确要求外，不得创建、修改、移动或删除 `docs/`；不得以同步文档或实现需要为由擅自改动。
 - `docs/Note.md` 是用户笔记，禁止修改、移动或删除；`HANDOVER.md` 是唯一例外，每日结束时覆盖当前阶段、待修复项、验证状态和下一步，次日先加载。
-- 根目录保留总纲、`阶段验收门模板.md`、`HANDOVER.md` 与 `Note.md`；CLI 在 `docs/usage/`，系统介绍在 `docs/introduction/`。
+- 根目录保留 `HANDOVER.md` 与 `Note.md`（只读）；CLI 在 `docs/usage/`，系统介绍在 `docs/introduction/`，基线扫描在 `docs/AgenticPD项目扫描报告.md`。
 - 所有 `.md` 使用中文；其他文件内容、代码注释、docstring、配置说明、CLI 输出和测试描述使用英文。
-- 计划验收采用 `docs/阶段验收门模板.md`；修改参数空间、QoR comparator 或 ORFS 命令语义前，先获用户授权更新 `docs/introduction/实验契约.md`。
+- 修改参数空间、QoR comparator 或 ORFS 命令语义前，先获用户授权更新 `docs/introduction/实验契约.md`。
 
 ## 编程纪律
 
 - 禁止硬编码用户目录、环境路径、预算、参数或 magic number；由项目根、配置、函数参数或具名常量推导。
-- 复用 `schemas/`、`managers/`、`orfs/` 边界；不得把阶段 B 后职责堆入 `main.py`。
+- 复用 `core/`、`storage/`、`orfs/` 边界；新职责放对应分层包，不得堆入 `main.py` 或超大编排文件。
 - 行为 bug 先添加失败回归测试再修复；不注释报错、不加绕过标记，应定位根因。
 - 注释和 docstring 解释 EDA 语义、约束和设计原因，不重复显而易见的 Python 语法。
 - `tests/fixtures/` 只读；测试用临时目录，禁止回写；`runs/` 不能作为唯一实验记录。

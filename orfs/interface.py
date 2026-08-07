@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 
 import config
 from config import FrameworkConfig
-from utils import QoR
+from core.utils import QoR
 
 from orfs.command import build_make_cmd
 from orfs.parser import (
@@ -199,14 +199,14 @@ class ORFSRunner:
             stage:    stage at which the checkpoint was created.
         """
         from pathlib import Path
-        from managers import CheckpointManager, TrialManager
+        from storage import CheckpointManager, TrialManager
         cm = CheckpointManager(self.cfg.flow_dir)
         # Look up trial record to get artifact_dir (dir name = iter-{N}-{trial_id})
         if self.cfg.run_dir is None:
             return False
         tm = TrialManager(self.cfg.run_dir)
         parent_trial = tm.get(trial_id)
-        from schemas.trial import resolve_artifact_dir
+        from core.models import resolve_artifact_dir
         trial_dir = (resolve_artifact_dir(parent_trial.artifact_dir, self.cfg.run_dir)
                      if (parent_trial and parent_trial.artifact_dir) else None)
         if trial_dir is None or not trial_dir.is_dir():
@@ -329,7 +329,7 @@ class ORFSRunner:
                                   from_stage: str) -> List[str]:
         """Internal: execute downstream clean make targets.
 
-        Stage D fix 2.2 (revised): see :meth:`clean_downstream` for the
+        see :meth:`clean_downstream` for the
         public contract.
         """
         from orfs.parser import downstream_clean_targets
@@ -398,7 +398,7 @@ class MockORFSRunner(ORFSRunner):
     def run_stage(self, stage, stage_params, variant, iteration):
         time.sleep(0.01)
         sq = self._mock_stage_qor(stage_params)
-        from schemas.trial import StageResult
+        from core.models import StageResult
         return StageResult(stage=stage, status="ok", elapsed_s=0.02,
                           exit_code=0, stage_qor=sq.get(stage, {}),
                           log_path="[mock] no real log")

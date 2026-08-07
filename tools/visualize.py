@@ -60,16 +60,10 @@ def load_tree(tree_path: Path) -> Dict[str, Dict[str, Any]]:
 
 
 def load_history(history_path: Path) -> List[Dict[str, Any]]:
-    """Load history from trials.jsonl (preferred) or history.json (legacy).
-
-    Detects the format automatically:
-    - .jsonl: one JSON object per line (TrialRecord format)
-    - .json:  a JSON array of flat dicts (old history.json format)
-    """
+    """Load trial history from trials.jsonl (one JSON object per line)."""
     if not history_path.is_file():
         return []
     text = history_path.read_text(encoding="utf-8")
-    # Detect format: JSONL starts with "{" on the first line
     if text.strip().startswith("{"):
         # trials.jsonl: one TrialRecord per line.
         # Dedup by trial_id (last-wins — create=“running” then update=“ok”),
@@ -109,9 +103,7 @@ def load_history(history_path: Path) -> List[Dict[str, Any]]:
                 ),
             })
         return entries
-    else:
-        # Old history.json: JSON array
-        return json.loads(text)
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +228,7 @@ def visualize_tree(run_dir: Path,
     """Generate optimization tree PNG, saved under run_dir.
 
     Args:
-        run_dir:      runs/<timestamp>/ directory, containing tree.json and history.json
+        run_dir:      runs/<timestamp>/ directory, containing tree.json and trials.jsonl
         output_name:  output filename (default optimization_tree.png)
 
     Returns:
@@ -248,10 +240,7 @@ def visualize_tree(run_dir: Path,
         return None
 
     nodes = load_tree(tree_path)
-    # Prefer trials.jsonl (stage C); fall back to history.json for old runs
     history_path = run_dir / "trials.jsonl"
-    if not history_path.is_file():
-        history_path = run_dir / "history.json"
     history = load_history(history_path) if history_path.is_file() else []
     best_iter = find_best_iteration(history)
 

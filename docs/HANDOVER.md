@@ -2,34 +2,35 @@
 
 ## 当前状态
 
-- 日期：2026-07-31
+- 日期：2026-08-07
 - 当前分支：`main`
-- 当前里程碑：原生 Multi-Agent 调参与引入 Doomed Prediction/GWTW 的独立 Demo 均已形成最小闭环。
-- 功能提交：`389a783`；合并提交：`4fc697b`。
+- 里程碑：完成「代码消肿 + 分层重组」重构，仓库以新结构为基线，准备下一轮功能开发。
 
-## 今日已完成
+## 最近完成（2026-08-07 重构）
 
-- 完成 JudgeAgent + 四个 Stage Agent 的独立入口 `multi_agent_gwtw.py`。
-- 跑通 PL/CTS 决策、Doomed 分类、GWTW fork、checkpoint 继承、finish QoR、trace、resume 与预算闭环。
-- 新增基于 `runs/` 静态证据生成的 HTML 可视化，并完成 README、中文项目报告、PDF、workflow SVG 和 architecture SVG。
-- 将 `tests/` 加入 `.gitignore`，测试文件保留在本地但不再由 Git 跟踪。
+- 包结构重组：`core/`（数据模型与通用工具）、`storage/`（Trial/Checkpoint/决策痕迹持久化）、`agents/`（Judge/Stage Agent 与 LLM 客户端）、`search/`（legacy 优化循环与优化树）、`gwtw/`（Doomed/GWTW 编排与调度）、`tools/`（CLI 与可视化）。
+- 超大文件拆分：所有源码单文件不超过约 600 行；原 `multi_agent_gwtw_orchestrator.py`（1926 行）拆为 `gwtw/orchestrator.py` + `config/proposals/fake_runner/population/cohort_run/cohort_common/cohort_resume/execution`；原 `schemas/trial.py`（1042 行）拆为 `core/models.py` + `core/decisions.py`。
+- 消除重复：删除原 Stage D 组件编排器与 `main.py --stage-d` 入口，Doomed/GWTW 只保留统一编排路径；删除 `orfs_interface.py` 兼容层、`scripts/build_fixtures.py` legacy 脚本。
+- 模块自检迁入 `tests/`，测试按领域重组；`make check` 改为纯语法 + CLI 契约检查，`make test` 为完整回归套件。
+- 历史 stage 文档、旧项目报告与阶段计划已删除；`docs/` 只保留 HANDOVER、WORKFLOW、Note、两份算法研读、usage/ 与新扫描报告。
 
-## 最近验证
+## 最近验证（全部实测通过）
 
-- `make check`：全部通过；包括 Trial schema 87/87、Stage D 17/17、Multi-Agent GWTW 167/167。
-- `make test`：489/489 通过。
-- 真实运行：8 个 trial，4 个 finish，`errors=[]`，剩余预算 12。
-- 证据：`runs/sky130hd_gcd/multi-agent-gwtw-demo_20260731_061927/`。
+- `make check`：通过（compileall + 全部 CLI `--help` 退出码 0）。
+- `make test`：66/66 通过。
+- 双入口 mock smoke（零 LLM、零 EDA）：`main.py --mock-llm --mock-orfs --iterations 1` 正常结束；`multi_agent_gwtw.py --config configs/experiments/multi-agent-gwtw-demo.yml --mock-llm --mock-orfs` 完成 8 trial、4 finish、`errors=[]`。
 
 ## 已知风险与待处理项
 
-- wall-clock 预算仅在阶段边界检查，不能主动中断正在执行的 ORFS stage。
-- 当前实验规模不足以证明 QoR 有统计意义的提升。
-- 通用 replay、跨 session resume、版本化参数空间和学习型 Doomed Predictor 后置。
-- `docs/Note.md` 是用户笔记，继续保持只读。
+- `tests/` 仍按项目约定仅保留在本地（`.gitignore` 排除），新 clone 只能跑 `make check`；重新开发路线确定后建议评估是否纳入版本管理。
+- wall-clock 预算只在阶段边界检查，不能主动中断正在执行的 ORFS stage。
+- 真实实验规模仍小（单设计 8 trial），不足以支撑统计性 QoR 结论。
+- 通用 replay、跨 session resume、版本化参数空间与学习型 Doomed Predictor 为后置项。
+- `environment_manifest.json` 中 ORFS commit 与 PDK revision 仍为 unresolved，跨环境比较前需刷新。
+- `docs/Note.md` 是用户笔记，保持只读。
 
 ## 下一步入口
 
-1. 先读取本文件、`AGENTS.md`、`docs/WORKFLOW.md` 和最新计划。
-2. 以真实 Demo 证据为基线扩大 design、seed 和参数空间，不先扩建非必要基础设施。
+1. 先读取本文件、`AGENTS.md`、`docs/WORKFLOW.md` 与 `docs/AgenticPD项目扫描报告.md`。
+2. 下一轮开发路线待用户确认后另立方案；当前基线为「两条可运行入口 + 分层包结构 + 66 项回归」。
 3. 修改实验契约、参数空间或 QoR comparator 前先取得用户授权。

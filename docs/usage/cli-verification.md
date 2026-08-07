@@ -6,8 +6,8 @@
 
 | 类别 | 是否调用 LLM | 是否调用 ORFS | 是否写入运行产物 |
 |---|---:|---:|---:|
-| `make test`、数据模型自检、`--help` | 否 | 否 | 否（临时测试目录除外） |
-| `trial_inspect.py`、`--list`、`clean.py --dry-run` | 否 | 否 | 否 |
+| `make test`、`--help` | 否 | 否 | 否（临时测试目录除外） |
+| `trial_inspect.py`、`clean.py --dry-run` | 否 | 否 | 否 |
 | `main.py --parse-only` | 否 | 否 | 是，创建 session 并写入配置快照 |
 | `--mock-llm --mock-orfs` | mock | mock | 是，写入 session |
 | `--baseline-only`、正常优化、trial 复现、checkpoint fork 验证 | 视命令而定 | 是 | 是 |
@@ -16,137 +16,100 @@
 
 ## 1. 纯 Python 验证
 
-以下是提交前的最低验证，不调用 LLM、ORFS、网络或 PDK：
+提交前的最低验证，不调用 LLM、ORFS、网络或 PDK：
 
 ```bash
+make check
 make test
-python3 schemas/trial.py
-python3 managers/checkpoint_manager.py
-python3 managers/trial_manager.py
 python3 main.py --help
+python3 multi_agent_gwtw.py --help
 python3 tools/trial_inspect.py --help
 python3 tools/trial_reproduce.py --help
 python3 tools/clean.py --help
+python3 -m tools.session_visualize --help
 python3 tools/checkpoint_fork_verify.py --help
 ```
 
-`make test` 的测试数会随项目演进变化，应以实际输出的 `OK` 为准。`--help` 仅验证 CLI 参数契约，不启动业务执行。
+`make check` 只做语法编译与 CLI 契约检查；`make test` 需要本地 `tests/`（按项目约定不进 Git）。
 
-## 2. 无 EDA 的查询与检查
-
-```bash
-# 解析既有 variant 的 QoR；只读 ORFS 已有报告。
-python3 main.py --parse-only agenticpd_baseline
-
-# 列出某设计的 session；列出最新 session 的 trial。
-python3 tools/trial_inspect.py --sessions sky130hd gcd
-python3 tools/trial_inspect.py --list sky130hd gcd
-
-# 查看单个 trial 和逐阶段记录。
-python3 tools/trial_inspect.py <trial-id> --stages
-
-# 列出可复现 trial，不启动复现。
-python3 tools/trial_reproduce.py --runs-dir runs/sky130hd_gcd/<session> --list
-
-# 仅预览清理范围，不删除任何文件。
-python3 tools/clean.py sky130hd gcd --dry-run
-```
-
-`--parse-only` 依赖已有 ORFS 报告；报告不存在或 QoR 不完整时会以非零退出。`trial_inspect.py` 的 `--list`、`--latest`、`--failed` 和 `--sessions` 均为只读查询。
-
-## 3. Mock 优化闭环
+## 2. 原始多 Agent 优化（`main.py`）
 
 ```bash
-python3 main.py --mock-llm --mock-orfs --design gcd --iterations 3
-python3 main.py --mock-llm --mock-orfs --design gcd --baseline-only
-python3 main.py --mock-llm --mock-orfs --design gcd --resume latest
-```
+# 全 mock 调试：零 token、零 EDA，秒级完成
+python3 main.py --mock-llm --mock-orfs --iterations 5
 
-mock 模式会创建 session、trial、树和日志，用于检查优化编排与持久化。它不执行 OpenROAD，生成的 QoR 是合成值，不能用于性能结论、阶段验收或真实 QoR 对比。
-
-常用运行参数：
-
-| 参数 | 作用 |
-|---|---|
-| `--iterations N` | baseline 之外的优化轮数 |
-| `--platform PLATFORM`、`--design DESIGN` | 覆盖默认目标 |
-| `--timeout SEC` | 单次 ORFS 命令超时 |
-| `--wns-tol PS`、`--tns-tol PS` | 通用优化器的 QoR 比较容差 |
-| `--resume [RUN_DIR]` | 恢复指定 session；省略路径时恢复最新 session |
-| `--log-level LEVEL` | `DEBUG` 会输出完整 prompt，日志处理时仍须遵守密钥与路径规则 |
-
-## 4. 真实 ORFS 运行
-
-以下命令会调用 ORFS；运行前确认 ORFS 环境、platform/design 配置、磁盘空间和目标 variant 范围。
-
-```bash
-# 真实 baseline；不调用 LLM。
+# 只跑真实 ORFS baseline，不调 LLM
 python3 main.py --baseline-only --platform sky130hd --design gcd
 
-# Mock LLM + 真实 ORFS；用于零 token 的执行链验证。
-python3 main.py --mock-llm --platform sky130hd --design gcd --iterations 2
+# 真实多 Agent 优化（需要 DEEPSEEK_API_KEY）
+python3 main.py --platform sky130hd --design gcd --iterations 3
 
-# 真实 LLM + 真实 ORFS；需要有效的 .env 配置。
-python3 main.py --platform sky130hd --design gcd --iterations 2
+# 恢复同一设计最近一次 session
+python3 main.py --platform sky130hd --design gcd --resume latest
+
+# 只解析已有 ORFS variant 的 QoR（零 token、零 EDA）
+python3 main.py --parse-only base
 ```
 
-通用优化器的 baseline cache 位于 `runs/<platform>_<design>/.baseline/`；ORFS 的共享 baseline variant 为 `agenticpd_baseline`。开始新运行前，运行器会清理旧的 AgenticPD variant，基线 variant 除外，因此不要把无关产物置于这些 variant 目录中。
+参数说明：`--iterations`（基线后的搜索轮数）、`--platform`/`--design`、`--timeout`、`--wns-tol`/`--tns-tol`（QoR 比较容差）、`--mock-llm`/`--mock-orfs`、`--baseline-only`、`--parse-only VARIANT`、`--resume [RUN_DIR]`、`--log-level`。所有显式传入的选项覆盖 `config.py` 默认值。
 
-## 5. Checkpoint fork 对照实验
+## 3. Doomed/GWTW Demo（`multi_agent_gwtw.py`）
+
+实验配置位于 `configs/experiments/multi-agent-gwtw-demo.yml`：
+
+```bash
+# 离线闭环：与真实 Demo 相同的编排，只替换 LLM/ORFS
+python3 multi_agent_gwtw.py \
+  --config configs/experiments/multi-agent-gwtw-demo.yml \
+  --mock-llm --mock-orfs
+
+# 真实闭环：真实 Judge + 四个 Stage Agent + 真实 ORFS
+python3 multi_agent_gwtw.py \
+  --config configs/experiments/multi-agent-gwtw-demo.yml
+```
+
+终端完成摘要给出 `total_trials`、`budget_remaining`、`errors` 与 `finish_trials`；该摘要只证明控制流结束，真实结果以 finish Trial 的 `final_qor` 与对应 ORFS post-route 报告为准。
+
+## 4. Checkpoint Fork 对照验证（`tools/checkpoint_fork_verify.py`）
 
 ```bash
 python3 tools/checkpoint_fork_verify.py \
-  --config configs/experiments/stage-c-checkpoint-fork.yaml
+  --config configs/experiments/checkpoint-fork.yaml
 ```
 
-该命令不调用 LLM，但会真实执行 baseline、full restart 与兼容 checkpoint fork。它在 `runs/<platform>_<design>/checkpoint_fork/<时间戳>/` 写入：
+该工具执行 baseline、不兼容参数的阴性对照与兼容参数的 fork/full-restart 对照，并把验收结论写入 `runs/<platform>_<design>/checkpoint_fork/<时间戳>/report.json`。会启动真实 ORFS。
 
-- `report.json`：总 verdict、QoR、耗时和验收规则结果；
-- `checkpoint_evidence.json`：checkpoint manifest 与校验结果；
-- `trials.jsonl` 与 `iter-*/trial.json`：trial 和阶段审计记录；
-- `experiment.log`：实验日志。
-
-通过时，报告的 `verdict` 为 `PASS`，且 `acceptance_validation.passed` 为 `true`。应额外检查 session 的 `.log`、`.json`、`.jsonl` 不含绝对用户路径。
-
-## 6. Trial 复现与可视化
+## 5. 查看、复现与清理
 
 ```bash
-# 真实 ORFS 复现：读取 trial 参数，运行新的 suffixed variant，并比较 QoR。
-python3 tools/trial_reproduce.py <trial-id> \
-  --runs-dir runs/sky130hd_gcd/<session>
+# 列出某个设计的 Trial
+python3 tools/trial_inspect.py --list sky130hd gcd
 
-# 生成优化树图；需要 session 内已有 tree.json。
-python3 tools/visualize.py runs/sky130hd_gcd/<session>
+# 查看一个 Trial 的阶段结果
+python3 tools/trial_inspect.py <trial_id> --stages
+
+# 为已有 session 生成离线 HTML 可视化
+python3 -m tools.session_visualize \
+  runs/sky130hd_gcd/<session>
+
+# 查看清理范围，不执行删除
+python3 tools/clean.py sky130hd gcd --dry-run
 ```
 
-trial 复现会真实运行 ORFS；`--export` 还会导出最佳结果。仅当 trial 状态为 `ok` 且保存了完整四阶段参数时才能复现。
+可视化输出位于 `runs/.../<session>/visualization/index.html`，可直接用浏览器打开。复现（`trial_reproduce.py`）和清理（`clean.py`）可能启动真实 EDA 或删除运行产物，执行前先阅读 `docs/introduction/实验契约.md` 并核对目标。
 
-## 7. 清理
+## 6. Session 证据结构
 
-`clean.py` 的清理粒度是 design，不是单个 trial：它会覆盖该 design 的多个 ORFS variant 与全部 session。日常只能使用 `--dry-run`；实际删除必须先取得用户明确授权，并核对输出目标。
-
-```bash
-python3 tools/clean.py --target sky130hd gcd --dry-run
-```
-
-工具保护名为 `base` 的 ORFS variant，但这不代表其他 variant 或 `runs/` session 可以无审查删除。
-
-## 8. Session 目录
-
-通用优化 session 使用如下结构：
+每次运行写入独立目录：
 
 ```text
-runs/
-  sky130hd_gcd/
-    .baseline/
-      trial.json
-    001_YYYYMMDD_HHMMSS/
-      config_snapshot.json
-      trials.jsonl
-      tree.json
-      agenticpd.log
-      iter-<n>-<trial-id>/
-        trial.json
+runs/<platform>_<design>/<session>/
+├── config_snapshot.json
+├── trials.jsonl
+├── tree.json
+├── traces/decisions.jsonl
+├── iter-<N>-<trial_id>/trial.json
+└── visualization/            # 仅 session_visualize 生成
 ```
 
-checkpoint fork 实验使用独立的 `checkpoint_fork/<时间戳>/` session。ORFS 原始 artifact 位于 `flow` 下的 `logs/`、`reports/`、`results/`、`objects/`；session 中保存的是其可审计索引和派生证据。
+`trials.jsonl` 是追加索引，读取时按 `trial_id` last-wins；单 Trial 的当前完整状态以 `trial.json` 为准。最终 QoR 的权威来源是 ORFS `logs/<platform>/<design>/<variant>/6_report.json`。

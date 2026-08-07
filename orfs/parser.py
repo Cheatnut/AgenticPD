@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """orfs.parser — Stage C1: ORFS report parsing.
 
-Extracted from orfs_interface.py.  Reads 6_report.json, stage JSON logs,
+Reads 6_report.json, stage JSON logs,
 and make logs to extract QoR metrics and detect failure stages.
 """
 
@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Tuple
 
 import config
 from config import FrameworkConfig
-from utils import QoR
+from core.utils import QoR
 
 log = logging.getLogger(__name__)
 

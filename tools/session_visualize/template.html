@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgenticPD Session Visualization</title>
+<style>
+/* =============================================================================
+   Base & Variables
+   ============================================================================= */
+:root {
+  --bg: #f8f9fa; --card-bg: #ffffff; --text: #212529; --text-muted: #6c757d;
+  --border: #dee2e6; --accent: #4c72b0; --accent-green: #55a868;
+  --accent-red: #d9534f; --accent-yellow: #f0ad4e; --accent-purple: #8172b2;
+  --radius: 6px; --shadow: 0 1px 3px rgba(0,0,0,.08);
+  --font-mono: 'SF Mono','Fira Code','Consolas',monospace;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  background:var(--bg);color:var(--text);line-height:1.5;padding:16px}
+h1{font-size:1.4rem;margin-bottom:4px}
+h2{font-size:1.15rem;margin:16px 0 8px;padding-bottom:4px;border-bottom:2px solid var(--border)}
+h3{font-size:1.0rem;margin:12px 0 6px}
+
+/* Layout */
+.container{max-width:1100px;margin:0 auto}
+.header{background:var(--card-bg);border-radius:var(--radius);padding:14px 18px;
+  box-shadow:var(--shadow);margin-bottom:12px;display:flex;justify-content:space-between;
+  align-items:center;flex-wrap:wrap;gap:8px}
+.header .badges{display:flex;gap:6px;flex-wrap:wrap}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:.75rem;font-weight:600}
+.badge-ok{background:#d4edda;color:#155724}
+.badge-warn{background:#fff3cd;color:#856404}
+.badge-degraded{background:#f8d7da;color:#721c24}
+.badge-info{background:#d1ecf1;color:#0c5460}
+
+/* Cards */
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-bottom:12px}
+.card{background:var(--card-bg);border-radius:var(--radius);padding:10px 14px;box-shadow:var(--shadow)}
+.card .label{font-size:.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em}
+.card .value{font-size:1.1rem;font-weight:600;margin-top:2px}
+.card .value.small{font-size:.85rem}
+
+/* Sections */
+.section{margin-bottom:12px}
+.section-header{cursor:pointer;user-select:none;display:flex;align-items:center;gap:8px}
+.section-header .arrow{transition:transform .2s;font-size:.8rem}
+.section-header.open .arrow{transform:rotate(90deg)}
+.section-body{display:none;margin-top:8px}
+.section-body.open{display:block}
+
+/* Timeline */
+.timeline{position:relative;padding-left:28px;margin:12px 0}
+.timeline::before{content:'';position:absolute;left:10px;top:4px;bottom:4px;
+  width:2px;background:var(--border)}
+.tl-item{position:relative;margin-bottom:10px;padding:8px 12px;
+  background:var(--card-bg);border-radius:var(--radius);box-shadow:var(--shadow)}
+.tl-item::before{content:'';position:absolute;left:-22px;top:12px;
+  width:10px;height:10px;border-radius:50%;border:2px solid var(--text-muted);
+  background:var(--card-bg)}
+.tl-item.agent_proposal::before,.tl-item.agent_proposal_degraded::before{background:var(--accent);border-color:var(--accent)}
+.tl-item.observation::before{background:#17a2b8;border-color:#17a2b8}
+.tl-item.doomed_decision::before,.tl-item.doomed_decision_degraded::before{background:var(--accent-red);border-color:var(--accent-red)}
+.tl-item.gwtw_decision::before,.tl-item.gwtw_decision_degraded::before{background:var(--accent-yellow);border-color:var(--accent-yellow)}
+.tl-item.parent_selection::before,.tl-item.judge_parent_selection::before{background:var(--accent-purple);border-color:var(--accent-purple)}
+.tl-item.fork::before{background:#ff6b6b;border-color:#ff6b6b}
+.tl-item.execution_resolution::before{background:#20c997;border-color:#20c997}
+.tl-item.cohort_complete::before{background:var(--text-muted);border-color:var(--text-muted)}
+.tl-item.finish::before{background:var(--accent-green);border-color:var(--accent-green)}
+.tl-item .tl-label{font-weight:600;font-size:.88rem}
+.tl-item .tl-meta{font-size:.73rem;color:var(--text-muted);margin-top:2px}
+.tl-item .tl-etype{font-size:.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em}
+.tl-item .tl-tid{font-family:var(--font-mono);font-size:.7rem;background:#e9ecef;
+  padding:1px 6px;border-radius:4px;display:inline-block;margin:2px 2px 0 0}
+
+/* Tables */
+table{width:100%;border-collapse:collapse;font-size:.82rem;margin:8px 0}
+th,td{padding:5px 8px;text-align:left;border-bottom:1px solid var(--border)}
+th{background:#f1f3f5;font-weight:600;font-size:.75rem;color:var(--text-muted)}
+tr:hover{background:#f8f9fa}
+td.best{background:#d4edda} td.worst{background:#f8d7da}
+.risk-survivor{color:var(--accent-green);font-weight:600}
+.risk-soft_bad{color:var(--accent-yellow);font-weight:600}
+.risk-hard_dead{color:var(--accent-red);font-weight:600}
+
+/* Trials */
+.trial-card{background:var(--card-bg);border-radius:var(--radius);box-shadow:var(--shadow);
+  margin-bottom:8px;overflow:hidden}
+.trial-header{cursor:pointer;user-select:none;padding:8px 12px;display:flex;
+  justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.trial-header:hover{background:#f8f9fa}
+.trial-header .tid{font-family:var(--font-mono);font-weight:600;font-size:.9rem}
+.trial-header .status{font-size:.75rem;padding:1px 8px;border-radius:10px;font-weight:600}
+.trial-header .meta{font-size:.75rem;color:var(--text-muted)}
+.trial-body{display:none;padding:8px 12px;border-top:1px solid var(--border)}
+.trial-body.open{display:block}
+.status-ok{background:#d4edda;color:#155724}
+.status-paused{background:#fff3cd;color:#856404}
+.status-failed{background:#f8d7da;color:#721c24}
+.status-running{background:#d1ecf1;color:#0c5460}
+.stage-row{display:flex;align-items:center;gap:4px;margin:4px 0;font-size:.78rem}
+.stage-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.stage-label{font-family:var(--font-mono);font-size:.72rem;min-width:24px}
+.stage-elapsed{font-size:.7rem;color:var(--text-muted);margin-left:auto}
+.params-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px;margin:6px 0}
+.param-kv{font-family:var(--font-mono);font-size:.75rem;padding:2px 6px;
+  background:#f1f3f5;border-radius:3px}
+
+/* Tree */
+.tree-svg{width:100%;overflow-x:auto;margin:8px 0}
+.tree-svg svg{display:block;margin:0 auto}
+.node-rect{cursor:pointer;transition:opacity .15s}
+.node-rect:hover{opacity:.75}
+.edge-line{stroke:#adb5bd;stroke-width:1.5;fill:none}
+.edge-line.fork-checkpoint{stroke:#28a745;stroke-width:2.0;stroke-dasharray:6,3}
+.edge-line.fork-fullrestart{stroke:#d9534f;stroke-width:2.0;stroke-dasharray:3,3}
+
+/* Whitelist */
+.whitelist{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0}
+.whitelist .wl-tid{font-family:var(--font-mono);font-size:.72rem;
+  background:#d4edda;color:#155724;padding:2px 8px;border-radius:4px;font-weight:600}
+
+/* Filters */
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.filters button{padding:4px 12px;border:1px solid var(--border);border-radius:var(--radius);
+  background:var(--card-bg);cursor:pointer;font-size:.78rem}
+.filters button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+/* Detail expander */
+.detail-toggle{font-size:.7rem;color:var(--accent);cursor:pointer;margin-left:6px}
+.detail-block{display:none;margin-top:4px;padding:6px 8px;background:#f8f9fa;
+  border-radius:4px;font-size:.73rem}
+.detail-block.open{display:block}
+
+@media(max-width:700px){
+  .cards{grid-template-columns:repeat(2,1fr)}
+  .header{flex-direction:column;align-items:flex-start}
+}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header">
+  <div><h1 id="page-title">AgenticPD Session</h1>
+    <span style="font-size:.8rem;color:var(--text-muted)" id="page-subtitle"></span></div>
+  <div class="badges" id="header-badges"></div>
+</div>
+<div class="cards" id="overview-cards"></div>
+
+<div class="section">
+  <div class="section-header open" onclick="toggleSection(this,'timeline-body')">
+    <span class="arrow">&#9654;</span><h2 style="margin:0;border:none;padding:0">Timeline</h2>
+    <span style="font-size:.75rem;color:var(--text-muted)" id="timeline-summary"></span>
+  </div>
+  <div class="section-body open" id="timeline-body">
+    <div class="timeline" id="timeline"></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-header" onclick="toggleSection(this,'pl-cohort-body')">
+    <span class="arrow">&#9654;</span><h2 style="margin:0;border:none;padding:0">PL Cohort</h2>
+    <span style="font-size:.75rem;color:var(--text-muted)" id="pl-cohort-summary"></span>
+  </div>
+  <div class="section-body" id="pl-cohort-body"></div>
+</div>
+
+<div class="section">
+  <div class="section-header" onclick="toggleSection(this,'cts-cohort-body')">
+    <span class="arrow">&#9654;</span><h2 style="margin:0;border:none;padding:0">CTS Cohort</h2>
+    <span style="font-size:.75rem;color:var(--text-muted)" id="cts-cohort-summary"></span>
+  </div>
+  <div class="section-body" id="cts-cohort-body"></div>
+</div>
+
+<div class="section">
+  <div class="section-header open" onclick="toggleSection(this,'trials-body')">
+    <span class="arrow">&#9654;</span><h2 style="margin:0;border:none;padding:0">Trials <span id="trial-count"></span></h2>
+  </div>
+  <div class="section-body open" id="trials-body">
+    <div class="filters" id="trial-filters"></div>
+    <div id="trial-list"></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-header" onclick="toggleSection(this,'tree-body')">
+    <span class="arrow">&#9654;</span><h2 style="margin:0;border:none;padding:0">Optimization Tree</h2>
+    <span style="font-size:.75rem;color:var(--text-muted)" id="tree-summary"></span>
+  </div>
+  <div class="section-body" id="tree-body">
+    <div class="tree-svg" id="tree-svg"></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-header open" onclick="toggleSection(this,'qor-body')">
+    <span class="arrow">&#9654;</span><h2 style="margin:0;border:none;padding:0">Finish QoR Comparison</h2>
+    <span style="font-size:.75rem;color:var(--text-muted)" id="qor-summary"></span>
+  </div>
+  <div class="section-body open" id="qor-body">
+    <div id="qor-table-container"></div>
+  </div>
+</div>
+</div>
+
+<script>
+var DATA = __DATA_PLACEHOLDER__;
+
+(function(){
+if (!DATA || typeof DATA !== 'object') {
+  document.body.innerHTML = '<div style="padding:40px;text-align:center;color:#d9534f">'
+    + '<h2>Data Error</h2><p>Embedded session data is missing or corrupt.</p></div>';
+  return;
+}
+renderAll();
+})();
+
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function shortId(id) { return String(id).slice(0,8); }
+
+window.toggleSection = function(headerEl, bodyId) {
+  headerEl.classList.toggle('open');
+  document.getElementById(bodyId).classList.toggle('open');
+};
+window.toggleTrial = function(tid) {
+  var body = document.getElementById('trial-body-' + tid);
+  if (body) body.classList.toggle('open');
+};
+window.toggleDetail = function(ev, detailId) {
+  ev.stopPropagation();
+  var el = document.getElementById(detailId);
+  if (el) el.classList.toggle('open');
+};
+
+// =============================================================================
+// Render all
+// =============================================================================
+function renderAll() {
+  renderHeader();
+  renderOverview();
+  renderTimeline();
+  renderCohort('pl');
+  renderCohort('cts');
+  renderTrials();
+  renderTree();
+  renderQor();
+}
+
+// =============================================================================
+// Header
+// =============================================================================
+function renderHeader() {
+  var ov = DATA.overview;
+  document.getElementById('page-title').textContent =
+    'AgenticPD Session — ' + esc(ov.experiment_id || '?');
+  document.getElementById('page-subtitle').textContent =
+    esc(ov.platform || '?') + ' / ' + esc(ov.design || '?') + ' — ' + esc(ov.session_dir_name || '');
+
+  var badges = '';
+  var mode = ov.mode || '';
+  if (mode === 'stage-e') badges += '<span class="badge badge-info">Stage E</span>';
+  else if (mode === 'stage-d') badges += '<span class="badge badge-info">Stage D</span>';
+  else badges += '<span class="badge badge-warn">Mode: ' + esc(String(mode)) + '</span>';
+
+  if (ov.has_traces) badges += '<span class="badge badge-ok">Full Trace</span>';
+  else badges += '<span class="badge badge-degraded">Not recorded</span>';
+
+  if (ov.mock_llm === true) badges += '<span class="badge badge-warn">Mock LLM</span>';
+  else if (ov.mock_llm === false) badges += '<span class="badge badge-ok">Real LLM</span>';
+  else badges += '<span class="badge badge-warn">LLM: Unknown</span>';
+
+  if (ov.mock_orfs === true) badges += '<span class="badge badge-warn">Mock ORFS</span>';
+  else if (ov.mock_orfs === false) badges += '<span class="badge badge-ok">Real ORFS</span>';
+  else badges += '<span class="badge badge-warn">ORFS: Unknown</span>';
+
+  document.getElementById('header-badges').innerHTML = badges;
+}
+
+// =============================================================================
+// Overview cards
+// =============================================================================
+function renderOverview() {
+  var ov = DATA.overview;
+  var items = [
+    ['Experiment', ov.experiment_id],
+    ['Platform / Design', ov.platform + ' / ' + ov.design],
+    ['Population', ov.population_size],
+    ['Seed', ov.seed],
+    ['Max Trials', ov.max_trials],
+    ['Wall Clock', (ov.wall_clock_budget_s != null ? ov.wall_clock_budget_s + 's' : '∞')],
+    ['Decision Stages', (ov.decision_stages || []).join(', ') || '-'],
+    ['PL survivor / audit', ov.pl_survivor_count + ' / ' + ov.pl_audit_quota],
+    ['CTS survivor / audit', ov.cts_survivor_count + ' / ' + ov.cts_audit_quota],
+  ];
+  document.getElementById('overview-cards').innerHTML = items.map(function(c) {
+    return '<div class="card"><div class="label">' + esc(c[0]) + '</div>'
+      + '<div class="value small">' + esc(String(c[1] != null ? c[1] : '-')) + '</div></div>';
+  }).join('');
+}
+
+// =============================================================================
+// Timeline
+// =============================================================================
+function renderTimeline() {
+  var tl = DATA.timeline || [];
+  document.getElementById('timeline-summary').textContent = '(' + tl.length + ' events)';
+  if (!tl.length) {
+    document.getElementById('timeline').innerHTML = '<p style="color:var(--text-muted)">No timeline events</p>';
+    return;
+  }
+  var html = '';
+  tl.forEach(function(ev) {
+    var etype = ev.entry_type || '';
+    var isDegraded = etype.indexOf('_degraded') >= 0;
+    var badge = isDegraded ? ' <span class="badge badge-degraded" style="font-size:.6rem">Not recorded</span>' : '';
+    var ts = ev.timestamp ? ev.timestamp.replace('T',' ').slice(0,19) : '';
+    html += '<div class="tl-item ' + esc(etype) + '">'
+      + '<div class="tl-etype">' + esc(etype) + '</div>'
+      + '<div class="tl-label">' + esc(ev.label) + badge + '</div>'
+      + '<div class="tl-meta">' + esc(ts) + '  ' + esc(ev.meta || '') + '</div>';
+    if (ev.detail && Object.keys(ev.detail).length) {
+      var detailId = 'dtl-' + Math.random().toString(36).slice(2,8);
+      html += '<span class="detail-toggle" onclick="toggleDetail(event,\'' + detailId + '\')">[+]</span>';
+      html += '<div class="detail-block" id="' + detailId + '"><pre style="font-size:.7rem;white-space:pre-wrap">'
+        + esc(JSON.stringify(ev.detail, null, 2)) + '</pre></div>';
+    }
+    if (ev.trial_ids && ev.trial_ids.length && ev.trial_ids[0]) {
+      html += '<div style="margin-top:2px">'
+        + ev.trial_ids.filter(Boolean).map(function(t){return '<span class="tl-tid">'+esc(shortId(t))+'</span>';}).join(' ')
+        + '</div>';
+    }
+    html += '</div>';
+  });
+  document.getElementById('timeline').innerHTML = html;
+}
+
+// =============================================================================
+// Cohort
+// =============================================================================
+function renderCohort(stage) {
+  var key = stage === 'pl' ? 'pl_cohort' : 'cts_cohort';
+  var cohort = DATA[key] || {};
+  var obs = cohort.observations || [];
+  var children = cohort.children || [];
+  var whitelist = cohort.survivor_whitelist || [];
+  var paused = cohort.paused || [];
+  var hard = cohort.hard_dead || [];
+  var hasTraces = cohort.has_traces;
+
+  var summary = document.getElementById(key.replace('_','-') + '-summary');
+  var stageLabel = stage.toUpperCase();
+  var nSurv = obs.filter(function(o){return o.risk_class==='survivor'}).length;
+  var nSoft = obs.filter(function(o){return o.risk_class==='soft_bad'}).length;
+  var nHard = obs.filter(function(o){return o.risk_class==='hard_dead'}).length;
+  summary.textContent = nSurv + ' survivor, ' + nSoft + ' soft_bad, ' + nHard
+    + ' hard_dead | ' + children.length + ' forks | ' + paused.length + ' paused | ' + hard.length + ' hard_dead';
+  if (!hasTraces) summary.textContent += ' (Not recorded)';
+
+  var html = '';
+  if (!hasTraces) {
+    html += '<p style="color:#721c24;font-size:.78rem;margin-bottom:8px">'
+      + '⚠ Not recorded — traces/decisions.jsonl absent; data from trials.jsonl embedded decisions.</p>';
+  }
+
+  if (whitelist.length) {
+    html += '<h3>Survivor Whitelist</h3><div class="whitelist">'
+      + whitelist.map(function(t){return '<span class="wl-tid">'+esc(shortId(t))+'</span>';}).join('')
+      + '</div>';
+  }
+
+  if (obs.length) {
+    html += '<h3>Observations &amp; Doomed / GWTW</h3><table><thead><tr>'
+      + '<th>Trial</th><th>WNS (ps)</th><th>TNS (ps)</th><th>Rank</th>'
+      + '<th>Risk Class</th><th>Risk Score</th><th>Reason Codes</th>'
+      + '<th>GWTW Action</th><th>Audit?</th></tr></thead><tbody>';
+    obs.forEach(function(o) {
+      var rc = o.risk_class || '';
+      html += '<tr>'
+        + '<td style="font-family:var(--font-mono);font-size:.78rem">'+esc(shortId(o.trial_id))+'</td>'
+        + '<td>'+(o.stage_wns_ps!=null?o.stage_wns_ps.toFixed(1):'-')+'</td>'
+        + '<td>'+(o.stage_tns_ps!=null?o.stage_tns_ps.toFixed(1):'-')+'</td>'
+        + '<td>'+(o.rank!=null?o.rank:'-')+'</td>'
+        + '<td class="risk-'+rc+'">'+esc(rc||'-')+'</td>'
+        + '<td>'+(o.risk_score!=null?o.risk_score.toFixed(3):'-')+'</td>'
+        + '<td style="font-size:.72rem">'+esc((o.reason_codes||[]).join(', ')||'-')+'</td>'
+        + '<td>'+esc(o.gwtw_action||'-')+'</td>'
+        + '<td>'+(o.gwtw_is_audit_pass?'✓':'-')+'</td></tr>';
+    });
+    html += '</tbody></table>';
+  } else {
+    html += '<p style="color:var(--text-muted);font-size:.8rem">Not recorded</p>';
+  }
+
+  if (children.length) {
+    html += '<h3>Fork Children (' + children.length + ')</h3><table><thead><tr>'
+      + '<th>Child</th><th>Parent</th><th>Execution Mode</th>'
+      + '<th>Effective Start</th><th>Agent Params?</th><th>Fallback?</th>'
+      + '<th>Checkpoint</th></tr></thead><tbody>';
+    children.forEach(function(c) {
+      var er = c.execution_resolution || {};
+      html += '<tr>'
+        + '<td style="font-family:var(--font-mono);font-size:.78rem">'+esc(shortId(c.trial_id))+'</td>'
+        + '<td style="font-family:var(--font-mono);font-size:.78rem">'+esc(shortId(c.parent_trial_id||''))+'</td>'
+        + '<td>'+esc(er.execution_mode||'-')+'</td>'
+        + '<td>'+esc(er.effective_start_stage||'-')+'</td>'
+        + '<td>'+(c.agent_params_provided?'✓':'-')+'</td>'
+        + '<td>'+(c.agent_is_fallback?'<span style="color:#d9534f">Yes</span>':'-')+'</td>'
+        + '<td style="font-size:.7rem">'+esc((er.consumed_checkpoint||'-').slice(0,24))+'</td></tr>';
+    });
+    html += '</tbody></table>';
+  }
+
+  if (paused.length) {
+    html += '<h3>Paused Trials</h3><div class="whitelist" style="background:#fff3cd">'
+      + paused.map(function(t){return '<span class="wl-tid" style="background:#fff3cd;color:#856404">'+esc(shortId(t))+'</span>';}).join('')+'</div>';
+  }
+  document.getElementById(key.replace('_','-') + '-body').innerHTML = html;
+}
+
+// =============================================================================
+// Trials
+// =============================================================================
+function renderTrials() {
+  var trials = DATA.trials || [];
+  document.getElementById('trial-count').textContent = '(' + trials.length + ')';
+
+  var counts = {};
+  trials.forEach(function(t){counts[t.status]=(counts[t.status]||0)+1;});
+  var labels = {ok:'OK',paused:'Paused',failed:'Failed',running:'Running'};
+  var html = '<button class="active" onclick="filterTrials(\'all\',this)">All ('+trials.length+')</button>';
+  Object.keys(counts).forEach(function(s){
+    html += '<button onclick="filterTrials(\''+s+'\',this)">'+esc(labels[s]||s)+' ('+counts[s]+')</button>';
+  });
+  document.getElementById('trial-filters').innerHTML = html;
+  window._trialData = trials;
+  renderTrialList(trials);
+}
+
+window.filterTrials = function(status, btn) {
+  document.querySelectorAll('#trial-filters button').forEach(function(b){b.classList.remove('active');});
+  btn.classList.add('active');
+  var filtered = status === 'all' ? window._trialData
+    : window._trialData.filter(function(t){return t.status === status;});
+  renderTrialList(filtered);
+};
+
+function renderTrialList(trials) {
+  var html = '';
+  trials.forEach(function(t) {
+    var hasTrace = t.has_decision_trace;
+    var stHtml = '';
+    var stageColors = {FP:'#4c72b0',PL:'#55a868',CTS:'#c44e52',RT:'#8172b2',finish:'#ccb974'};
+    t.stage_results.forEach(function(sr) {
+      var color = stageColors[sr.stage] || '#999';
+      stHtml += '<div class="stage-row">'
+        + '<span class="stage-dot" style="background:'+color+'"></span>'
+        + '<span class="stage-label">'+esc(sr.stage)+'</span>'
+        + '<span style="font-size:.7rem;color:'+(sr.status==='ok'?'#28a745':'#d9534f')+'">'+esc(sr.status)+'</span>'
+        + '<span class="stage-elapsed">'+(sr.elapsed_s||0).toFixed(1)+'s</span></div>';
+    });
+
+    var paramsHtml = '';
+    ['FP','PL','CTS','RT'].forEach(function(st) {
+      var p = (t.params||{})[st] || {};
+      Object.keys(p).forEach(function(k) {
+        paramsHtml += '<span class="param-kv">'+esc(st)+'.'+esc(k)+'='+esc(String(p[k]))+'</span>';
+      });
+    });
+
+    var qor = t.final_qor;
+    var qorHtml = '';
+    if (qor) {
+      qorHtml = '<div style="font-size:.8rem;margin-top:4px"><strong>Final QoR:</strong> '
+        + 'WNS='+(qor.wns_ps!=null?qor.wns_ps.toFixed(1)+'ps':'-')+' '
+        + 'TNS='+(qor.tns_ps!=null?qor.tns_ps.toFixed(1)+'ps':'-')+' '
+        + 'Area='+(qor.area_um2!=null?qor.area_um2.toFixed(1)+'µm²':'-')+' '
+        + 'Power='+(qor.power_w!=null?(qor.power_w*1000).toFixed(3)+'mW':'-');
+      if (t.report_path) qorHtml += ' <span style="font-size:.7rem;color:var(--text-muted)">[report: '+esc(t.report_path)+']</span>';
+      qorHtml += '</div>';
+    }
+
+    var dgHtml = '';
+    t.doomed_decisions.forEach(function(dd, i) {
+      var gd = t.gwtw_decisions[i] || {};
+      dgHtml += '<span style="font-size:.72rem;display:inline-block;margin:2px 4px;padding:1px 6px;'
+        + 'background:#f1f3f5;border-radius:3px">'+esc(dd.risk_class||'?')+' → '+esc(gd.action||'?')+'</span>';
+    });
+
+    var branchInfo = '';
+    if (t.parent_trial_id) branchInfo += '<span style="font-size:.7rem;color:var(--text-muted)">← '+esc(shortId(t.parent_trial_id))+'</span>';
+    if (t.branch_stage) branchInfo += '<span style="font-size:.7rem;color:var(--text-muted)"> fork@'+esc(t.branch_stage)+'</span>';
+
+    html += '<div class="trial-card" id="trial-'+esc(t.trial_id)+'">'
+      + '<div class="trial-header" onclick="toggleTrial(\''+esc(t.trial_id)+'\')">'
+        + '<span class="tid">'+esc(shortId(t.trial_id))+'</span>'
+        + branchInfo
+        + '<span style="flex:1"></span>'
+        + (hasTrace?'':'<span class="badge badge-degraded" style="font-size:.65rem">Not recorded</span>')
+        + dgHtml
+        + '<span class="status status-'+esc(t.status)+'">'+esc(t.status)+'</span>'
+      + '</div>'
+      + '<div class="trial-body" id="trial-body-'+esc(t.trial_id)+'">'
+        + '<div style="display:flex;gap:16px;flex-wrap:wrap">'
+          + '<div style="flex:1;min-width:180px"><h3>Stages</h3>'+stHtml+'</div>'
+          + '<div style="flex:2;min-width:300px"><h3>Parameters</h3><div class="params-grid">'+paramsHtml+'</div></div>'
+        + '</div>'
+        + qorHtml
+        + (t.execution_resolution ? '<div style="font-size:.78rem;margin-top:4px"><strong>Execution:</strong> '
+          + esc(t.execution_resolution.execution_mode||'')+' → '+esc(t.execution_resolution.effective_start_stage||'')+'</div>' : '')
+      + '</div></div>';
+  });
+  document.getElementById('trial-list').innerHTML = html || '<p style="color:var(--text-muted)">No trials</p>';
+}
+
+// =============================================================================
+// Tree (SVG)
+// =============================================================================
+function renderTree() {
+  var tree = DATA.tree || {};
+  var nodes = tree.nodes || {};
+  var nodeList = Object.values(nodes);
+  if (!nodeList.length) {
+    document.getElementById('tree-summary').textContent = '(empty)';
+    return;
+  }
+  document.getElementById('tree-summary').textContent = nodeList.length + ' nodes';
+
+  var layers = {root:[],FP:[],PL:[],CTS:[],RT:[]};
+  nodeList.forEach(function(n) {
+    var s = n.stage || 'root';
+    if (layers[s]) layers[s].push(n);
+  });
+  var layerOrder = ['root','FP','PL','CTS','RT'];
+  layerOrder.forEach(function(s) {
+    if (layers[s]) layers[s].sort(function(a,b){return (a.iteration||0)-(b.iteration||0);});
+  });
+
+  var hSpacing = 140, vSpacing = 80, nodeW = 110, nodeH = 36;
+  var margin = {top:20,right:40,bottom:20,left:40};
+  var maxN = Math.max.apply(null, layerOrder.map(function(s){return (layers[s]||[]).length;}));
+  var svgW = Math.max(600, maxN * hSpacing + margin.left + margin.right);
+  var svgH = layerOrder.length * vSpacing + margin.top + margin.bottom;
+
+  // Trial-id -> status map for colouring
+  var trialStatus = {};
+  (DATA.trials||[]).forEach(function(t){trialStatus[t.trial_id]=t.status;});
+
+  // Node positions
+  var positions = {};
+  layerOrder.forEach(function(stage, li) {
+    var ln = layers[stage] || [];
+    var y = margin.top + li * vSpacing + vSpacing/2;
+    var totalW = (ln.length - 1) * hSpacing;
+    var startX = (svgW - totalW) / 2;
+    ln.forEach(function(n, i) { positions[n.node_id] = {x: startX + i * hSpacing, y: y}; });
+  });
+
+  // Edges — distinguish checkpoint fork vs full restart
+  var edges = '';
+  nodeList.forEach(function(n) {
+    if (!n.parent_id || !positions[n.parent_id] || !positions[n.node_id]) return;
+    var p = positions[n.parent_id], c = positions[n.node_id];
+    var mode = n._execution_mode || '';
+    var edgeClass = 'edge-line';
+    if (mode === 'checkpoint_fork') edgeClass += ' fork-checkpoint';
+    else if (mode === 'full_restart') edgeClass += ' fork-fullrestart';
+    edges += '<line class="'+edgeClass+'" x1="'+p.x+'" y1="'+(p.y+nodeH/2)+'" x2="'+c.x+'" y2="'+(c.y-nodeH/2)+'" />';
+  });
+
+  // Nodes — coloured by trial status
+  var rects = '';
+  var statusColors = {ok:'#55a868',paused:'#f0ad4e',failed:'#d9534f',running:'#64b5cd'};
+  var stageColors = {root:'#64b5cd',FP:'#4c72b0',PL:'#55a868',CTS:'#c44e52',RT:'#8172b2'};
+  nodeList.forEach(function(n) {
+    var pos = positions[n.node_id];
+    if (!pos) return;
+    var stage = n.stage || 'root';
+    var tid = n.source_trial_id || '';
+    var status = n._trial_status || (tid ? (trialStatus[tid]||'') : '');
+    var fill = (status && statusColors[status]) ? statusColors[status] : (stageColors[stage] || '#999');
+    var label = stage==='root' ? 'ROOT' : stage+'|'+esc(tid.slice(0,6));
+
+    rects += '<g class="node-group" data-nid="'+esc(n.node_id)+'" data-tid="'+esc(tid)+'">'
+      + '<rect class="node-rect" x="'+(pos.x-nodeW/2)+'" y="'+(pos.y-nodeH/2)
+      + '" width="'+nodeW+'" height="'+nodeH+'" rx="4" fill="'+fill+'" '
+      + 'onclick="highlightTrial(\''+esc(tid)+'\')">'
+      + '<title>'+esc(n.node_id)+'\nStage: '+esc(stage)+'\nTrial: '+esc(tid)+'\nStatus: '+esc(status)+'\nIteration: '+(n.iteration||'')+'</title>'
+      + '</rect>'
+      + '<text x="'+pos.x+'" y="'+pos.y+'" text-anchor="middle" dominant-baseline="central" '
+      + 'fill="white" font-size="10" font-family="monospace" style="pointer-events:none">'+esc(label)+'</text>'
+      + '</g>';
+  });
+
+  var svg = '<svg width="'+svgW+'" height="'+svgH+'" viewBox="0 0 '+svgW+' '+svgH+'">' + edges + rects + '</svg>';
+  document.getElementById('tree-svg').innerHTML = svg;
+
+  // Legend
+  var legendHtml = '<div style="font-size:.72rem;margin-top:6px;display:flex;gap:12px;flex-wrap:wrap">'
+    + '<span><span style="display:inline-block;width:12px;height:12px;background:#55a868;border-radius:2px;vertical-align:middle"></span> OK</span>'
+    + '<span><span style="display:inline-block;width:12px;height:12px;background:#f0ad4e;border-radius:2px;vertical-align:middle"></span> Paused</span>'
+    + '<span><span style="display:inline-block;width:12px;height:12px;background:#d9534f;border-radius:2px;vertical-align:middle"></span> Failed</span>'
+    + '<span><span style="display:inline-block;width:12px;height:12px;background:#64b5cd;border-radius:2px;vertical-align:middle"></span> Running</span>'
+    + '<span style="margin-left:8px">|</span>'
+    + '<span style="color:#28a745">── checkpoint fork</span>'
+    + '<span style="color:#d9534f">── full restart</span>'
+    + '</div>';
+  document.getElementById('tree-svg').insertAdjacentHTML('beforeend', legendHtml);
+
+  window.highlightTrial = function(tid) {
+    var el = document.getElementById('trial-'+tid);
+    if (el) {
+      el.scrollIntoView({behavior:'smooth',block:'center'});
+      el.style.boxShadow = '0 0 0 3px var(--accent)';
+      setTimeout(function(){el.style.boxShadow='';}, 2000);
+    }
+  };
+}
+
+// =============================================================================
+// Finish QoR table
+// =============================================================================
+function renderQor() {
+  var qors = DATA.finish_qors || [];
+  document.getElementById('qor-summary').textContent = '(' + qors.length + ' finished trials)';
+  if (!qors.length) {
+    document.getElementById('qor-table-container').innerHTML = '<p style="color:var(--text-muted)">No finish QoR data</p>';
+    return;
+  }
+
+  function best(arr, key, lowerBetter) {
+    var vals = arr.map(function(r){return r[key];}).filter(function(v){return v!=null;});
+    return vals.length ? (lowerBetter ? Math.min.apply(null,vals) : Math.max.apply(null,vals)) : null;
+  }
+  function worst(arr, key, lowerBetter) {
+    var vals = arr.map(function(r){return r[key];}).filter(function(v){return v!=null;});
+    return vals.length ? (lowerBetter ? Math.max.apply(null,vals) : Math.min.apply(null,vals)) : null;
+  }
+  var bestWns=best(qors,'wns_ps',false),worstWns=worst(qors,'wns_ps',false);
+  var bestTns=best(qors,'tns_ps',false),worstTns=worst(qors,'tns_ps',false);
+  var bestArea=best(qors,'area_um2',true),worstArea=worst(qors,'area_um2',true);
+  var bestPower=best(qors,'power_w',true),worstPower=worst(qors,'power_w',true);
+
+  var html = '<table><thead><tr>'
+    + '<th>Trial</th><th>Parent</th><th>WNS (ps)</th><th>TNS (ps)</th>'
+    + '<th>Area (µm²)</th><th>Power (W)</th><th>Report</th></tr></thead><tbody>';
+  qors.forEach(function(q) {
+    function cellClass(val,bestV,worstV) {
+      if (val==null||bestV==null) return '';
+      if (val===bestV) return 'best';
+      if (val===worstV) return 'worst';
+      return '';
+    }
+    html += '<tr>'
+      + '<td style="font-family:var(--font-mono);font-size:.78rem">'+esc(shortId(q.trial_id))+'</td>'
+      + '<td style="font-family:var(--font-mono);font-size:.72rem">'+esc(shortId(q.parent_trial_id||''))+'</td>'
+      + '<td class="'+cellClass(q.wns_ps,bestWns,worstWns)+'">'+(q.wns_ps!=null?q.wns_ps.toFixed(1):'-')+'</td>'
+      + '<td class="'+cellClass(q.tns_ps,bestTns,worstTns)+'">'+(q.tns_ps!=null?q.tns_ps.toFixed(1):'-')+'</td>'
+      + '<td class="'+cellClass(q.area_um2,bestArea,worstArea)+'">'+(q.area_um2!=null?q.area_um2.toFixed(1):'-')+'</td>'
+      + '<td class="'+cellClass(q.power_w,bestPower,worstPower)+'">'+(q.power_w!=null?(q.power_w*1000).toFixed(3)+'m':'-')+'</td>'
+      + '<td style="font-size:.7rem;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(q.report_path||'')+'">'+esc(q.report_path||'-')+'</td></tr>';
+  });
+  html += '</tbody></table>';
+  document.getElementById('qor-table-container').innerHTML = html;
+}
+</script>
+</body>
+</html>

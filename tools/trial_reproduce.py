@@ -33,8 +33,8 @@ from typing import Dict, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from managers import TrialManager
-from utils import QoR, qor_is_better
+from storage import TrialManager
+from core.utils import QoR, qor_is_better
 
 
 # ---------------------------------------------------------------------------
