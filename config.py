@@ -306,7 +306,7 @@ class FrameworkConfig:
 
     # ---- LLM (DeepSeek, OpenAI-compatible API) ----
     llm_base_url: str = "https://api.deepseek.com"
-    llm_model: str = "deepseek-v4-pro"
+    llm_model: str = "deepseek-v4-flash"
     llm_temperature: float = 0.6
     llm_api_key_env: str = "DEEPSEEK_API_KEY"  # env var name for API key (never hardcode key)
     max_json_retries: int = 3         # number of retries when LLM JSON parsing fails
