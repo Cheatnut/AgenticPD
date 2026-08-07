@@ -27,7 +27,7 @@ description: 对 AgenticPD 执行零 LLM、零 ORFS、零网络的纯 Python 验
 git status --short
 rg --files tests -g 'test_*.py' | sort
 make test
-python3 schemas/trial.py
+python3 -m unittest tests.test_core_models tests.test_qor tests.test_storage_trace
 python3 main.py --help
 python3 tools/trial_inspect.py --help
 python3 tools/trial_reproduce.py --help
@@ -40,11 +40,14 @@ python3 tools/clean.py --help
 |---|---|
 | `tests/test_qor.py` | fixture JSON 与文本兜底的 QoR 解析、单位转换、timing-first comparator |
 | `tests/test_fixtures.py` | 成功/失败 Trial fixture、checkpoint manifest、失败阶段耗时 |
-| `tests/test_schemas.py` | Trial/Stage/Checkpoint 数据模型、JSONL 去重和损坏行、临时目录中的 manifest hash 校验 |
+| `tests/test_core_models.py` | Trial/Stage/Checkpoint 数据模型、JSONL 去重和损坏行、临时目录中的 manifest hash 校验 |
+| `tests/test_qor.py` | QoR 比较表与 round-trip（从原 utils 自检迁移） |
+| `tests/test_storage_trace.py` | decision trace writer/reader 与路径安全 |
+| `tests/test_gwtw_*.py` | Doomed/GWTW 调度、cohort、orchestrator 自检迁移 |
 
 ## 结果判定
 
-- P0：`make test`、`schemas/trial.py` 或任一必跑 CLI `--help` 非零退出；测试启动真实 LLM/ORFS/网络；验证命令写入或删除非临时项目产物。
+- P0：`make test`、数据模型自检或任一必跑 CLI `--help` 非零退出；测试启动真实 LLM/ORFS/网络；验证命令写入或删除非临时项目产物。
 - P1：测试发现为 0、关键测试文件缺失、测试声明的隔离边界与实际行为不符，或 CLI 帮助接口与 `docs/usage/cli-verification.md` 的零副作用命令不一致。
 - P2：测试输出噪声、断言信息不足、运行时间异常但仍通过，或可改善的覆盖建议。
 - 通过：所有必跑命令退出码为 0，`make test` 显示 `OK`，且未启动被禁止的外部服务或 flow。
@@ -75,7 +78,7 @@ python3 tools/clean.py --help
 
 | 命令 | 结果 | 证据 |
 |---|---|---|
-| `python3 schemas/trial.py` | ... | ... |
+| `python3 -m unittest tests.test_core_models tests.test_qor tests.test_storage_trace` | ... | ... |
 
 ## 4. CLI 参数契约 — [PASS / FAIL]
 

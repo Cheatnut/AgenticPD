@@ -6,6 +6,8 @@
 
 协作目标不是增加 Agent 数量，而是通过职责分离、批量交付和独立证据，减少用户转述、重复审查及局部补丁链。
 
+本流程由持久化的多 Agent 协作体系执行：角色表（Dispatcher/Executor/Verifier/Reviewer）、状态机与交接协议见 `docs/team/README.md`，当前交接状态记录在 `docs/team/STATE.md`。下面第 3 节的五步流程就是单个交付包的生命周期。
+
 ## 2. 角色与决策权
 
 ### 用户：范围与红线负责人

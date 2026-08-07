@@ -18,6 +18,18 @@ AgenticPD 是构建在 OpenROAD-flow-scripts（ORFS）之上的物理设计 QoR 
 无论开发项目还是知识管理项目，第一步永远是建规则：新项目先写 AGENTS.md，新目录先定结构约定（什么放哪、怎么命名、何时清理）。
 没有规范的工作空间不动手。已有规范的项目，严格遵守其 AGENTS.md 中的约定。需要调整规范时先改文档、再改实践，不要反过来。
 
+## 多 Agent 协作体系
+
+项目采用持久化的多 Agent 协作体系，角色与交接协议见 `docs/team/README.md`，当前运行状态见 `docs/team/STATE.md`（每次交接必须更新）。功能开发请求默认按以下顺序执行：
+
+1. Dispatcher（Codex）出一次性交付包，写 `docs/team/deliverables/` 并更新 STATE；
+2. 用户确认范围后交 Executor（Claude）实现 + 回归测试 + 交付报告；
+3. Verifier（Codex）按 `code-test` 技能独立重跑纯 Python 门；
+4. Reviewer（Codex）按 `code-review` 技能五维度审查并给出通过/返工结论；
+5. 全部门通过后由用户授权 commit/merge/push。
+
+子代理派发必须使用自包含任务文本（不继承完整对话上下文），防止 agent 执行对话中提到的其他指令。
+
 ## 代码结构约定
 
 仓库按低耦合高内聚分层，新职责必须落在对应层，不得堆进 `main.py` 或超大编排文件：
@@ -35,7 +47,7 @@ AgenticPD 是构建在 OpenROAD-flow-scripts（ORFS）之上的物理设计 QoR 
 
 ## Codex 职责边界
 
-- 开始工作前读取 `docs/WORKFLOW.md`、`docs/HANDOVER.md`（存在时）与 `docs/AgenticPD项目扫描报告.md`；范围不明时先请求用户确认。
+- 开始工作前读取 `docs/WORKFLOW.md`、`docs/HANDOVER.md`、`docs/team/STATE.md`（存在时）与 `docs/AgenticPD项目扫描报告.md`；范围不明时先请求用户确认。
 - Codex 负责现状扫描、一次性交付包、验收标准、PR 前审查、运行核验、集中修改建议及验收后的 Git 收尾。
 - Codex 不直接实现功能，除非用户明确授权；不得因修复简单而绕过 Claude 的执行者职责。
 - 审查必须核对实现、测试断言和原始证据，不得把 Claude 的完成报告直接视为通过证据。

@@ -35,7 +35,7 @@ rg -n --glob '*.py' 'Path\("[a-z]' .
 
 ```bash
 rg -n --glob '*.py' '= None|is None|== None|Optional\[' .
-rg -n --glob '*.py' '\.get\(|\[[^]]+\]' schemas/trial.py optimizer.py managers/ orfs/ agents.py
+rg -n --glob '*.py' '\.get\(|\[[^]]+\]' core/ storage/ search/ orfs/ agents/ gwtw/
 ```
 
 ## 三：语言规则

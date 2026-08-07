@@ -32,5 +32,6 @@
 ## 下一步入口
 
 1. 先读取本文件、`AGENTS.md`、`docs/WORKFLOW.md` 与 `docs/AgenticPD项目扫描报告.md`。
-2. 下一轮开发路线待用户确认后另立方案；当前基线为「两条可运行入口 + 分层包结构 + 66 项回归」。
-3. 修改实验契约、参数空间或 QoR comparator 前先取得用户授权。
+2. 多 Agent 协作体系已固化：角色与交接协议见 `docs/team/README.md`，当前状态见 `docs/team/STATE.md`；新功能开发默认走 Dispatcher→Executor→Verifier→Reviewer。
+3. 下一轮开发路线待用户确认后另立方案；当前基线为「两条可运行入口 + 分层包结构 + 66 项回归」。
+4. 修改实验契约、参数空间或 QoR comparator 前先取得用户授权。
