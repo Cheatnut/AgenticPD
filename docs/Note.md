@@ -33,6 +33,59 @@ llm到真实运行需要经过四重考验
 
 由utils.qor_is_better()完成候选优胜判定
 
+3-Trial与Checkpoint系统
+
+数据模型schemas/trial.py
+
+持久化managers/
+
+
+StageResult
+
+TrialRecord
+
+CheckpointRef
+
+FailureClass
+
+trial_id随机八位十六进制字符串
+
+TrialManager
+CheckpointManager完整性和兼容性
+
+param继承后的完整参数
+param_diff相对于父trial的变化
+
+
+4-ORFS执行与QoR系统
+
+ORFS adapter
+
+
+5-实验验证与回归系统
+
+
+configs/experiments/
+YAML独立实验声明,正式实验需要先冻结YAML
+产生:人工根据实验设计编写的版本受控文件
+先产生YAML实验声明，再运行实验，程序产生ORFS产物与runs/下session产物
+消费:设计者消费,检验实际结果有无满足承诺;仅仅作为实验契约,main.py不调用，YAML不能强制约束
+维护:发起并负责该实验的人，维护时间是实验开始之前，不是得到结果之后;实验跑完之后不要覆盖修改原有YANL，应该复制成一个新文件并升级名称
+
+environment_manifest.json环境版本清单
+config_snapshot.json某次session启动时运行配置副本:
+
+main::build_config()生产
+Optimizer._begin_trial()消费,每次创建Trial时Optimizer读取snapshot文件原始字节并计算SHA-256前16位
+生成
+TrialRecord.config_hash副本摘要
+trial.json只保存hash
+
+
+
+
+
+
 
 
 

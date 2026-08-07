@@ -1,5 +1,0 @@
-Agentic EDA平台
-1. Spec-RTL-GDS 自动生成
-2. 自然语言和EDA工具交互
-3. Flow Optimization: Agentic-PD / ORFS-Agent
-4. Tool-Evolve:  优化OpenROAD source code based on request
